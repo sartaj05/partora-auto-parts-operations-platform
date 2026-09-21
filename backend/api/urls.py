@@ -14,4 +14,5 @@ urlpatterns = [
     path("barcodes/lookup/", views.barcode_lookup_view),
     path("fitments/", views.fitments_view),
     path("purchase-orders/", views.purchase_orders_view),
+    path("warehouses/", views.warehouses_view),
 ]
