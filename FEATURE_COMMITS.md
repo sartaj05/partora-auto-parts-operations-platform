@@ -1,19 +1,28 @@
 # Feature-wise Commit Map
 
-This repository was intentionally built in feature-sized Git commits so the development sequence is easy to review, demo, or extend.
+The repository is intentionally built in reviewable feature commits. The ten requested enhancements each have their own commit.
 
-| Commit | Feature |
+| Commit | Enhancement |
 |---|---|
-| `a55f57d` | Bootstrap repository, product brief, README and ignore rules |
-| `8b904c4` | Core Django project, signed-token login, roles and CORS foundation |
-| `e274051` | Inventory, quotation, supplier and stock domain models/API reads |
-| `31d5591` | Responsive public landing page and trust-focused visual system |
-| `f7e6d6d` | Login flow and automatic offline/demo authentication fallback |
-| `a70c502` | Role-aware application shell, dashboards and operational modules |
-| `66cf805` | Database migration, Docker stack and static frontend deployment support |
-| `cc0c549` | Persistent demo database path and hardened seed data setup |
-| `7c696cc` | Backend create flows for catalog, quotations, suppliers and stock |
-| `a6cce81` | Reusable frontend create modal plus offline write fallback |
-| `f335368` | Connected create forms for live Django and frontend-only demo mode |
+| `d732880` | Barcode / QR scan lookup and printable inventory labels |
+| `5701cba` | Vehicle compatibility, year/variant/engine and OEM mapping |
+| `55a1001` | Purchase orders, supplier ordering and stock receiving |
+| `1577959` | Multi-warehouse stock and branch transfer workflow |
+| `efe254e` | Low-stock recommendations and one-click replenishment PO |
+| `981840f` | Quotation → sales order → invoice pipeline |
+| `744b484` | Customer/dealer CRM, credit and payment terms |
+| `5905792` | Tier pricing, quantity discounts and margin calculator |
+| `4a17a83` | KPI analytics, reporting visuals and CSV export |
+| `2cbe53f` | Notifications, approvals and audit trail |
+| `5f97ea6` | Complete demo seed data for all enhanced workflows |
 
-Use `git log --oneline --reverse` to view the exact history in sequence.
+The earlier repository history is also preserved, including the original landing page, login, role-aware dashboard, Django API foundation, offline demo mode and deployment setup.
+
+Useful commands:
+
+```bash
+git log --oneline --decorate
+git log --oneline --reverse
+git show d732880
+git show 2cbe53f
+```
