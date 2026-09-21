@@ -4,7 +4,7 @@ import { createEndpoint, loadEndpoint } from '../api/client'
 import { useAuth } from '../context/AuthContext'
 import CreateModal from '../components/CreateModal'
 import StatusBadge from '../components/StatusBadge'
-import { BarcodePage, FitmentsPage, PurchaseOrdersPage, WarehousesPage } from './OperationsPages'
+import { BarcodePage, FitmentsPage, PurchaseOrdersPage, WarehousesPage, ReorderPage } from './OperationsPages'
 
 const nav = [
   ['dashboard','/app','Overview','⌂'],
@@ -16,6 +16,7 @@ const nav = [
   ['fitments','/app/fitments','Fitments','⌘'],
   ['purchase_orders','/app/purchase-orders','Purchase orders','▥'],
   ['warehouses','/app/warehouses','Warehouses','▦'],
+  ['reorder','/app/reorder','Reorder desk','↻'],
 ]
 
 function money(n) { return new Intl.NumberFormat('en-IN', { style:'currency', currency:'INR', maximumFractionDigits:0 }).format(n || 0) }
@@ -163,6 +164,7 @@ export default function DashboardPage(){
     <Route path="fitments" element={<Allowed module="fitments"><FitmentsPage/></Allowed>}/>
     <Route path="purchase-orders" element={<Allowed module="purchase_orders"><PurchaseOrdersPage/></Allowed>}/>
     <Route path="warehouses" element={<Allowed module="warehouses"><WarehousesPage/></Allowed>}/>
+    <Route path="reorder" element={<Allowed module="reorder"><ReorderPage/></Allowed>}/>
     <Route path="*" element={<Navigate to="/app" replace/>}/>
   </Routes></Shell>
 }

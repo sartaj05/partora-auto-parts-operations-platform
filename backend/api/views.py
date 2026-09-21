@@ -1,5 +1,5 @@
 import json
-from datetime import date
+from datetime import date, timedelta
 from uuid import uuid4
 from django.contrib.auth import authenticate
 from django.db.models import DecimalField, ExpressionWrapper, F, Q, Sum
@@ -11,10 +11,10 @@ from .models import Product, Quotation, StockMovement, Supplier, VehicleFitment,
 from .serializers import product_dict, quotation_dict, supplier_dict
 
 ROLE_MODULES = {
-    "admin": ["dashboard", "inventory", "quotations", "suppliers", "stock", "barcodes", "fitments", "purchase_orders", "warehouses"],
-    "manager": ["dashboard", "inventory", "quotations", "suppliers", "stock", "barcodes", "fitments", "purchase_orders", "warehouses"],
+    "admin": ["dashboard", "inventory", "quotations", "suppliers", "stock", "barcodes", "fitments", "purchase_orders", "warehouses", "reorder"],
+    "manager": ["dashboard", "inventory", "quotations", "suppliers", "stock", "barcodes", "fitments", "purchase_orders", "warehouses", "reorder"],
     "sales": ["dashboard", "inventory", "quotations", "barcodes", "fitments"],
-    "store": ["dashboard", "inventory", "stock", "barcodes", "fitments", "purchase_orders", "warehouses"],
+    "store": ["dashboard", "inventory", "stock", "barcodes", "fitments", "purchase_orders", "warehouses", "reorder"],
 }
 
 def parse_body(request):
@@ -301,4 +301,24 @@ def warehouses_view(request):
         except Exception as exc:
             return JsonResponse({"detail":f"Could not transfer stock: {exc}"},status=400)
         return JsonResponse({"item":{"id":transfer.id,"reference":transfer.reference,"from_warehouse":source.code,"to_warehouse":target.code,"sku":product.sku,"product":product.name,"quantity":qty,"status":"completed","created_at":transfer.created_at.isoformat()}},status=201)
+    return JsonResponse({"detail":"Method not allowed"},status=405)
+
+@csrf_exempt
+@roles_allowed("admin", "manager", "store")
+def reorder_view(request):
+    if request.method == "GET":
+        qs=Product.objects.select_related("supplier").filter(stock_qty__lte=F("reorder_level")).order_by("stock_qty")
+        items=[{"id":p.id,"sku":p.sku,"name":p.name,"supplier":p.supplier.name if p.supplier else None,"stock_qty":p.stock_qty,"reorder_level":p.reorder_level,"suggested_qty":max(p.reorder_qty,p.reorder_level*2-p.stock_qty),"unit_price":float(p.price),"severity":"out" if p.stock_qty<=0 else "low"} for p in qs]
+        return JsonResponse({"items":items,"count":len(items)})
+    if request.method == "POST":
+        data=parse_body(request) or {}
+        try:
+            product=Product.objects.select_related("supplier").get(sku=str(data["sku"]).strip().upper())
+            if not product.supplier: raise ValueError("Product has no preferred supplier")
+            qty=max(1,int(data.get("quantity") or product.reorder_qty)); unit_cost=float(data.get("unit_cost") or product.price)
+            po=PurchaseOrder.objects.create(po_no=f"PO-{timezone.now():%y%m%d}-{uuid4().hex[:4].upper()}",supplier=product.supplier,status="approved",expected_date=timezone.localdate()+timedelta(days=product.supplier.lead_time_days),total=qty*unit_cost,created_by=request.api_user)
+            PurchaseOrderItem.objects.create(purchase_order=po,product=product,quantity=qty,unit_cost=unit_cost)
+        except Exception as exc:
+            return JsonResponse({"detail":f"Could not create replenishment PO: {exc}"},status=400)
+        return JsonResponse({"item":{"id":po.id,"po_no":po.po_no,"sku":product.sku,"supplier":product.supplier.name,"quantity":qty,"status":po.status}},status=201)
     return JsonResponse({"detail":"Method not allowed"},status=405)

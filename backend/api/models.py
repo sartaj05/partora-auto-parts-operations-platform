@@ -149,3 +149,6 @@ class StockTransfer(models.Model):
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="completed")
     created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name="stock_transfers")
     created_at = models.DateTimeField(auto_now_add=True)
+
+# Feature 05: smarter replenishment quantity separate from alert threshold.
+Product.add_to_class("reorder_qty", models.PositiveIntegerField(default=25))
