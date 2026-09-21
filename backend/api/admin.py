@@ -20,3 +20,5 @@ admin.site.register(SalesOrder)
 admin.site.register(Invoice)
 from .models import Customer
 admin.site.register(Customer)
+from .models import PriceRule
+admin.site.register(PriceRule)

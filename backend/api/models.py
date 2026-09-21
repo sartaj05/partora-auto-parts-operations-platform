@@ -189,3 +189,16 @@ class Customer(models.Model):
 
     def __str__(self):
         return self.company or self.name
+
+# Feature 08: tier pricing and discount rules.
+Product.add_to_class("cost_price", models.DecimalField(max_digits=12, decimal_places=2, default=0))
+Product.add_to_class("wholesale_price", models.DecimalField(max_digits=12, decimal_places=2, default=0))
+Product.add_to_class("dealer_price", models.DecimalField(max_digits=12, decimal_places=2, default=0))
+
+class PriceRule(models.Model):
+    name = models.CharField(max_length=120)
+    customer_type = models.CharField(max_length=20, choices=Customer.TYPE_CHOICES, default="dealer")
+    min_qty = models.PositiveIntegerField(default=1)
+    discount_percent = models.DecimalField(max_digits=5, decimal_places=2, default=0)
+    active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)

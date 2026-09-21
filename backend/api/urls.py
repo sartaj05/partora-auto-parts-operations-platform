@@ -18,4 +18,5 @@ urlpatterns = [
     path("reorder/", views.reorder_view),
     path("sales-flow/", views.sales_flow_view),
     path("customers/", views.customers_view),
+    path("pricing/", views.pricing_view),
 ]
