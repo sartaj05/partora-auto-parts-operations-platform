@@ -1,33 +1,47 @@
 # Project Brief
 
 ## Product
-**Partora** is a trusted operations workspace for auto-parts, hardware, and electrical distributors. It is designed for businesses with large catalogs where staff need fast inventory lookup, quotation creation, stock visibility, supplier coordination, and role-specific access.
+
+**Partora** is a trusted operations workspace for auto-parts, hardware and electrical distributors. It is designed for large catalogs where sales, purchasing and warehouse teams need fast search, accurate stock, pricing control and traceable approvals.
 
 ## Business problem
-Traditional distributor workflows are often split across spreadsheets, calls, and separate billing or warehouse tools. That creates slow quote turnaround, uncertain stock visibility, duplicate supplier follow-up, and inconsistent permissions.
 
-## Main goals
-1. Search a large parts catalog quickly by SKU, category, brand, description, or supplier.
-2. Generate and track quotations with clear statuses and values.
-3. View available, low, and out-of-stock items at a glance.
-4. Maintain supplier contact and lead-time information.
-5. Show each employee only the modules relevant to their role.
-6. Keep the frontend presentable even when the backend is not connected, using safe local demo data.
+Distributor operations are commonly split between spreadsheets, messaging, billing software and warehouse registers. That slows quotation turnaround, hides stock across branches, makes purchasing reactive, and weakens accountability around discounts and stock adjustments.
 
-## Frontend UX direction
-The interface intentionally avoids the common blue-gradient SaaS look. It uses a light warm-neutral base, deep ink text, muted sage, and restrained amber accents to communicate stability and trust. Cards have low contrast borders, generous spacing, and operational data is prioritized over decorative effects.
+## Product goals
+
+1. Search a large catalog quickly by SKU, barcode, description, brand, category, supplier or vehicle fitment.
+2. Move commercial work from quotation to sales order and invoice.
+3. Maintain supplier, customer/dealer, pricing and credit context in one workspace.
+4. Run purchasing and receiving with low-stock recommendations.
+5. Track stock across branches and transfer inventory between warehouses.
+6. Provide useful KPI and exposure reporting without turning the interface into spreadsheet cosplay.
+7. Enforce role-based access, approvals and audit visibility.
+8. Remain demo-ready when the backend is disconnected by falling back to local React data.
+
+## UX direction
+
+The interface intentionally avoids the generic blue-gradient SaaS look. It uses a warm neutral base, deep ink text, muted sage and restrained amber accents. Low-contrast borders, spacious layouts and clear operational tables are used to build trust and reduce visual fatigue.
 
 ## Core screens
-- Public landing page
-- Login page with demo account helper
-- Role-aware dashboard
-- Inventory search and stock table
-- Quotation list
-- Supplier list
-- Stock overview
 
-## Backend scope
-Core Django provides JSON endpoints through `JsonResponse`, Django ORM models, signed bearer tokens using `django.core.signing`, role checks, and a seed command for demo data. No Django REST Framework dependency is required.
+- Public landing page and login
+- Role-aware dashboard
+- Inventory search and stock movements
+- Barcode / QR desk
+- Vehicle fitment search
+- Quotations and sales flow
+- Customers / dealer CRM
+- Suppliers and purchase orders
+- Warehouses and reorder desk
+- Pricing calculator and rules
+- Analytics / reporting
+- Notifications, approvals and audit history
+
+## Backend direction
+
+Core Django exposes JSON endpoints with `JsonResponse`, Django ORM models, signed bearer tokens, role checks and an idempotent demo seed command. No Django REST Framework dependency is required.
 
 ## Demo behavior
-The frontend first attempts the Django API. On connection failure it automatically serves mock inventory, quotes, suppliers, metrics, and role permissions. This makes static frontend hosting suitable for client demos.
+
+The React app attempts the Django API first. Network/server failures switch supported modules to local mock data and local create actions. This allows frontend-only hosting for client demonstrations while the same UI connects to Django when the backend is available.

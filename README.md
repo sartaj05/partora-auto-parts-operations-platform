@@ -1,55 +1,86 @@
-# Partora — Auto Parts Operations Demo
+# Partora — Auto Parts / Hardware / Electrical Operations Platform
 
-Partora is a demo-ready auto-parts / hardware / electrical operations portal built for high-volume inventory search, quotation workflows, stock visibility, and supplier management.
+Partora is a demo-ready distributor operations portal built for large inventories, fast quotation work, warehouse control, purchasing, customer accounts and role-based access. The frontend is React + Vite; the backend is **core Django JSON APIs without Django REST Framework**.
+
+## What is included
+
+The original landing/login/dashboard experience plus ten enhanced modules:
+
+- Barcode / QR inventory scanning and labels
+- Vehicle compatibility and OEM cross-reference
+- Purchase-order and receiving workflow
+- Multi-warehouse stock and transfers
+- Low-stock recommendations and one-click replenishment
+- Quotation → sales order → invoice pipeline
+- Customer / dealer CRM and credit terms
+- Tier pricing, quantity discounts and margin preview
+- Analytics, KPI reports and CSV export
+- Notifications, approvals and audit history
+
+See `FEATURES.md` for the feature-by-feature scope.
 
 ## Stack
-- Frontend: React 18 + Vite + React Router
-- Backend: Core Django only (no Django REST Framework)
-- Database: SQLite for demo; configurable for production
-- Auth: Django user + Profile role, signed bearer token returned as JSON
-- Demo fallback: the React app automatically switches to local mock data when the backend cannot be reached
 
-## Roles
-- Admin — full access
-- Manager — inventory, suppliers, quotations, stock overview
-- Sales — inventory search and quotations
-- Store — inventory and stock movement views
+- Frontend: React, React Router and Vite
+- Backend: Django ORM + `JsonResponse` APIs
+- Database: SQLite for demo, replaceable for production
+- Authentication: Django users, role profile and signed bearer token
+- Roles: Admin, Manager, Sales and Store
+- Offline demo: automatic mock-data fallback when the API cannot be reached
+- Deployment: Docker Compose or frontend-only static deployment
+- Repository: initialized Git repository on `main`, with GitHub Actions CI included
 
 ## Demo users
+
 All demo accounts use password `demo123`.
-- admin@partora.demo
-- manager@partora.demo
-- sales@partora.demo
-- store@partora.demo
+
+| Role | Email |
+|---|---|
+| Admin | `admin@partora.demo` |
+| Manager | `manager@partora.demo` |
+| Sales | `sales@partora.demo` |
+| Store | `store@partora.demo` |
 
 ## Quick start
-### Backend
+
+### Full stack with Docker
+
+```bash
+docker compose up --build
+```
+
+Open `http://localhost:8080`.
+
+### Backend development
+
 ```bash
 cd backend
 python -m venv .venv
-source .venv/bin/activate   # Windows: .venv\\Scripts\\activate
+source .venv/bin/activate      # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 python manage.py migrate
 python manage.py seed_demo
 python manage.py runserver 8000
 ```
 
-### Frontend
+### Frontend development
+
 ```bash
 cd frontend
 npm install
 npm run dev
 ```
 
-Open `http://localhost:5173`.
+Open `http://localhost:5173`. If Django is unavailable, login automatically falls back to local demo mode and the enhanced modules use mock data/actions.
 
-If the Django server is unavailable, the frontend remains usable in Demo Mode with local data and demo login accounts.
+## Git / GitHub
 
-## Production build
-```bash
-cd frontend
-npm install
-npm run build
-```
+The downloadable ZIP includes `.git`, all feature-wise commits, the `main` branch and `.github/workflows/ci.yml`. Read `GITHUB_SETUP.md` to attach your own GitHub repository and push the complete history.
 
-See `DEPLOYMENT.md` for simple hosting options and environment variables.
+## More documentation
+
+- `PROJECT_BRIEF.md` — product and UX direction
+- `FEATURES.md` — enhanced module scope
+- `FEATURE_COMMITS.md` — commit-by-commit implementation map
+- `DEPLOYMENT.md` — Docker and static deployment options
+- `GITHUB_SETUP.md` — publish this initialized repository to GitHub
