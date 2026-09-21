@@ -7,14 +7,14 @@ from django.http import JsonResponse
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 from .auth import api_login_required, issue_token, roles_allowed
-from .models import Product, Quotation, StockMovement, Supplier, VehicleFitment, PurchaseOrder, PurchaseOrderItem, Warehouse, WarehouseStock, StockTransfer, SalesOrder, Invoice, Customer, PriceRule
+from .models import Product, Quotation, StockMovement, Supplier, VehicleFitment, PurchaseOrder, PurchaseOrderItem, Warehouse, WarehouseStock, StockTransfer, SalesOrder, Invoice, Customer, PriceRule, Notification, ApprovalRequest, AuditLog
 from .serializers import product_dict, quotation_dict, supplier_dict
 
 ROLE_MODULES = {
-    "admin": ["dashboard", "inventory", "quotations", "suppliers", "stock", "barcodes", "fitments", "purchase_orders", "warehouses", "reorder", "sales_flow", "crm", "pricing", "analytics"],
-    "manager": ["dashboard", "inventory", "quotations", "suppliers", "stock", "barcodes", "fitments", "purchase_orders", "warehouses", "reorder", "sales_flow", "crm", "pricing", "analytics"],
-    "sales": ["dashboard", "inventory", "quotations", "barcodes", "fitments", "sales_flow", "crm", "pricing", "analytics"],
-    "store": ["dashboard", "inventory", "stock", "barcodes", "fitments", "purchase_orders", "warehouses", "reorder"],
+    "admin": ["dashboard", "inventory", "quotations", "suppliers", "stock", "barcodes", "fitments", "purchase_orders", "warehouses", "reorder", "sales_flow", "crm", "pricing", "analytics", "governance"],
+    "manager": ["dashboard", "inventory", "quotations", "suppliers", "stock", "barcodes", "fitments", "purchase_orders", "warehouses", "reorder", "sales_flow", "crm", "pricing", "analytics", "governance"],
+    "sales": ["dashboard", "inventory", "quotations", "barcodes", "fitments", "sales_flow", "crm", "pricing", "analytics", "governance"],
+    "store": ["dashboard", "inventory", "stock", "barcodes", "fitments", "purchase_orders", "warehouses", "reorder", "governance"],
 }
 
 def parse_body(request):
@@ -22,6 +22,12 @@ def parse_body(request):
         return json.loads(request.body or "{}")
     except json.JSONDecodeError:
         return None
+
+def record_audit(request, action, entity, entity_id="", detail=""):
+    try:
+        AuditLog.objects.create(user=getattr(request, "api_user", None), action=action, entity=entity, entity_id=str(entity_id or ""), detail=str(detail or "")[:300])
+    except Exception:
+        pass
 
 def health(request):
     return JsonResponse({"status": "ok", "service": "partora-api"})
@@ -103,6 +109,7 @@ def inventory_view(request):
             )
         except Exception as exc:
             return JsonResponse({"detail": f"Could not add product: {exc}"}, status=400)
+        record_audit(request, "create", "product", product.id, product.sku)
         return JsonResponse({"item": product_dict(product)}, status=201)
     return JsonResponse({"detail": "Method not allowed"}, status=405)
 
@@ -121,6 +128,7 @@ def suppliers_view(request):
             phone=str(data.get("phone", "")).strip(), email=str(data.get("email", "")).strip(),
             lead_time_days=int(data.get("lead_time_days", 3)), rating=float(data.get("rating", 4.0)), active=True,
         )
+        record_audit(request, "create", "supplier", supplier.id, supplier.name)
         return JsonResponse({"item": supplier_dict(supplier)}, status=201)
     return JsonResponse({"detail": "Method not allowed"}, status=405)
 
@@ -144,6 +152,7 @@ def quotations_view(request):
             )
         except Exception as exc:
             return JsonResponse({"detail": f"Could not create quotation: {exc}"}, status=400)
+        record_audit(request, "create", "quotation", quote.id, quote.quote_no)
         return JsonResponse({"item": quotation_dict(quote)}, status=201)
     return JsonResponse({"detail": "Method not allowed"}, status=405)
 
@@ -178,6 +187,7 @@ def stock_view(request):
             movement = StockMovement.objects.create(product=product, movement_type=movement_type, quantity=quantity, reference=str(data.get("reference", "")).strip())
         except Exception as exc:
             return JsonResponse({"detail": f"Could not record stock movement: {exc}"}, status=400)
+        record_audit(request, "stock movement", "product", product.id, f"{movement_type} {quantity} / {movement.reference}")
         return JsonResponse({"item": {
             "id": movement.id, "sku": product.sku, "product": product.name, "type": movement.movement_type,
             "quantity": movement.quantity, "reference": movement.reference, "created_at": movement.created_at.isoformat(),
@@ -204,6 +214,7 @@ def barcodes_view(request):
             product.save(update_fields=["barcode", "updated_at"])
         except Exception as exc:
             return JsonResponse({"detail": f"Could not assign barcode: {exc}"}, status=400)
+        record_audit(request, "create", "product", product.id, product.sku)
         return JsonResponse({"item": product_dict(product)}, status=201)
     return JsonResponse({"detail": "Method not allowed"}, status=405)
 
@@ -404,3 +415,34 @@ def analytics_view(request):
     suppliers=[{"label":row["supplier__name"] or "Unassigned","value":row["count"]} for row in Product.objects.values("supplier__name").annotate(count=Count("id")).order_by("-count")[:6]]
     top_customers=[{"label":c.company or c.name,"value":float(c.outstanding_balance)} for c in Customer.objects.filter(active=True).order_by("-outstanding_balance")[:6]]
     return JsonResponse({"metrics":{"sales_total":sales_total,"invoice_total":invoice_total,"inventory_value":inventory_value,"inventory_cost":inventory_cost,"estimated_inventory_margin":max(0,inventory_value-inventory_cost),"outstanding":outstanding,"quote_conversion":round((approved/quotes_total*100),1) if quotes_total else 0,"low_stock":sum(1 for p in products if p.stock_qty<=p.reorder_level)},"categories":categories,"suppliers":suppliers,"top_customers":top_customers})
+
+@csrf_exempt
+@api_login_required
+def governance_view(request):
+    role=request.api_user.profile.role
+    if request.method == "GET":
+        notifications=Notification.objects.filter(Q(user=request.api_user)|Q(user__isnull=True,role=role)).order_by("-created_at")[:50]
+        approvals=ApprovalRequest.objects.select_related("requested_by","reviewed_by").order_by("-created_at")[:100]
+        audits=AuditLog.objects.select_related("user").order_by("-created_at")[:100]
+        return JsonResponse({"notifications":[{"id":n.id,"title":n.title,"message":n.message,"read":n.read,"created_at":n.created_at.isoformat()} for n in notifications],"approvals":[{"id":a.id,"kind":a.kind,"reference":a.reference,"amount":float(a.amount),"status":a.status,"requested_by":(a.requested_by.get_full_name() or a.requested_by.username) if a.requested_by else "System","reviewed_by":(a.reviewed_by.get_full_name() or a.reviewed_by.username) if a.reviewed_by else None,"notes":a.notes,"created_at":a.created_at.isoformat()} for a in approvals],"audits":[{"id":a.id,"user":(a.user.get_full_name() or a.user.username) if a.user else "System","action":a.action,"entity":a.entity,"entity_id":a.entity_id,"detail":a.detail,"created_at":a.created_at.isoformat()} for a in audits]})
+    if request.method == "POST":
+        data=parse_body(request) or {}; action=str(data.get("action","request"))
+        try:
+            if action == "request":
+                approval=ApprovalRequest.objects.create(kind=str(data.get("kind","purchase")),reference=str(data["reference"]).strip(),amount=float(data.get("amount",0) or 0),notes=str(data.get("notes","")).strip(),requested_by=request.api_user)
+                Notification.objects.create(role="manager",title=f"Approval needed: {approval.kind}",message=f"{approval.reference} requested by {request.api_user.get_full_name() or request.api_user.username}")
+                record_audit(request,"request approval","approval",approval.id,approval.reference)
+                item={"id":approval.id,"kind":approval.kind,"reference":approval.reference,"amount":float(approval.amount),"status":approval.status,"requested_by":request.api_user.get_full_name() or request.api_user.username,"reviewed_by":None,"notes":approval.notes,"created_at":approval.created_at.isoformat()}
+            elif action in {"approve","reject"}:
+                if role not in {"admin","manager"}: return JsonResponse({"detail":"Only admin or manager can review approvals"},status=403)
+                approval=ApprovalRequest.objects.get(id=int(data["id"])); approval.status="approved" if action=="approve" else "rejected"; approval.reviewed_by=request.api_user; approval.reviewed_at=timezone.now(); approval.notes=str(data.get("notes",approval.notes)); approval.save(update_fields=["status","reviewed_by","reviewed_at","notes"])
+                if approval.requested_by: Notification.objects.create(user=approval.requested_by,title=f"Approval {approval.status}",message=f"{approval.reference} was {approval.status} by {request.api_user.get_full_name() or request.api_user.username}")
+                record_audit(request,action,"approval",approval.id,approval.reference)
+                item={"id":approval.id,"kind":approval.kind,"reference":approval.reference,"amount":float(approval.amount),"status":approval.status,"requested_by":(approval.requested_by.get_full_name() or approval.requested_by.username) if approval.requested_by else "System","reviewed_by":request.api_user.get_full_name() or request.api_user.username,"notes":approval.notes,"created_at":approval.created_at.isoformat()}
+            elif action == "read":
+                notification=Notification.objects.get(id=int(data["id"])); notification.read=True; notification.save(update_fields=["read"]); item={"id":notification.id,"read":True}
+            else: raise ValueError("Unknown governance action")
+        except Exception as exc:
+            return JsonResponse({"detail":f"Could not complete governance action: {exc}"},status=400)
+        return JsonResponse({"item":item})
+    return JsonResponse({"detail":"Method not allowed"},status=405)

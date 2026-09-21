@@ -4,7 +4,7 @@ import { createEndpoint, loadEndpoint } from '../api/client'
 import { useAuth } from '../context/AuthContext'
 import CreateModal from '../components/CreateModal'
 import StatusBadge from '../components/StatusBadge'
-import { BarcodePage, FitmentsPage, PurchaseOrdersPage, WarehousesPage, ReorderPage, SalesFlowPage, CustomersPage, PricingPage, AnalyticsPage } from './OperationsPages'
+import { BarcodePage, FitmentsPage, PurchaseOrdersPage, WarehousesPage, ReorderPage, SalesFlowPage, CustomersPage, PricingPage, AnalyticsPage, GovernancePage } from './OperationsPages'
 
 const nav = [
   ['dashboard','/app','Overview','⌂'],
@@ -21,6 +21,7 @@ const nav = [
   ['crm','/app/customers','Customers','◎'],
   ['pricing','/app/pricing','Pricing','₹'],
   ['analytics','/app/analytics','Analytics','◒'],
+  ['governance','/app/governance','Approvals & audit','✓'],
 ]
 
 function money(n) { return new Intl.NumberFormat('en-IN', { style:'currency', currency:'INR', maximumFractionDigits:0 }).format(n || 0) }
@@ -173,6 +174,7 @@ export default function DashboardPage(){
     <Route path="customers" element={<Allowed module="crm"><CustomersPage/></Allowed>}/>
     <Route path="pricing" element={<Allowed module="pricing"><PricingPage/></Allowed>}/>
     <Route path="analytics" element={<Allowed module="analytics"><AnalyticsPage/></Allowed>}/>
+    <Route path="governance" element={<Allowed module="governance"><GovernancePage/></Allowed>}/>
     <Route path="*" element={<Navigate to="/app" replace/>}/>
   </Routes></Shell>
 }

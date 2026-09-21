@@ -202,3 +202,32 @@ class PriceRule(models.Model):
     discount_percent = models.DecimalField(max_digits=5, decimal_places=2, default=0)
     active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
+
+class Notification(models.Model):
+    user = models.ForeignKey(User, on_delete=models.CASCADE, null=True, blank=True, related_name="partora_notifications")
+    role = models.CharField(max_length=20, blank=True)
+    title = models.CharField(max_length=140)
+    message = models.CharField(max_length=300)
+    read = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+class ApprovalRequest(models.Model):
+    STATUS_CHOICES = [("pending","Pending"),("approved","Approved"),("rejected","Rejected")]
+    KIND_CHOICES = [("purchase","Purchase"),("discount","Discount"),("stock","Stock adjustment")]
+    kind = models.CharField(max_length=20, choices=KIND_CHOICES)
+    reference = models.CharField(max_length=80)
+    amount = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="pending")
+    requested_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name="approval_requests")
+    reviewed_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name="approval_reviews")
+    notes = models.CharField(max_length=300, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+
+class AuditLog(models.Model):
+    user = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name="partora_audit_logs")
+    action = models.CharField(max_length=80)
+    entity = models.CharField(max_length=80)
+    entity_id = models.CharField(max_length=80, blank=True)
+    detail = models.CharField(max_length=300, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
