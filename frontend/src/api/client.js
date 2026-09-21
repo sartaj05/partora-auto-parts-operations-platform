@@ -49,6 +49,7 @@ const fallback = {
   '/quotations/': () => ({ items: quotations, count: quotations.length }),
   '/suppliers/': () => ({ items: suppliers, count: suppliers.length }),
   '/stock/': () => ({ items: stock }),
+  '/barcodes/': () => ({ items: inventory.filter(x => x.barcode) }),
 }
 
 export async function loadEndpoint(path, role) {
@@ -66,6 +67,12 @@ export async function loadEndpoint(path, role) {
 
 function createMock(path, payload, role) {
   const id = Date.now()
+  if (path === '/barcodes/') {
+    const product = inventory.find(x => x.sku.toUpperCase() === String(payload.sku || '').toUpperCase())
+    if (!product) throw new Error('SKU not found in demo inventory')
+    product.barcode = String(payload.barcode || '').trim() || `PARTORA-${product.sku}`
+    return { item: product }
+  }
   if (path === '/inventory/') {
     const stockQty = Number(payload.stock_qty || 0)
     const reorder = Number(payload.reorder_level || 10)

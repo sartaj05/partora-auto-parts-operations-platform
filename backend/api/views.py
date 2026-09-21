@@ -11,10 +11,10 @@ from .models import Product, Quotation, StockMovement, Supplier
 from .serializers import product_dict, quotation_dict, supplier_dict
 
 ROLE_MODULES = {
-    "admin": ["dashboard", "inventory", "quotations", "suppliers", "stock"],
-    "manager": ["dashboard", "inventory", "quotations", "suppliers", "stock"],
-    "sales": ["dashboard", "inventory", "quotations"],
-    "store": ["dashboard", "inventory", "stock"],
+    "admin": ["dashboard", "inventory", "quotations", "suppliers", "stock", "barcodes"],
+    "manager": ["dashboard", "inventory", "quotations", "suppliers", "stock", "barcodes"],
+    "sales": ["dashboard", "inventory", "quotations", "barcodes"],
+    "store": ["dashboard", "inventory", "stock", "barcodes"],
 }
 
 def parse_body(request):
@@ -183,3 +183,35 @@ def stock_view(request):
             "quantity": movement.quantity, "reference": movement.reference, "created_at": movement.created_at.isoformat(),
         }}, status=201)
     return JsonResponse({"detail": "Method not allowed"}, status=405)
+
+@csrf_exempt
+@api_login_required
+def barcodes_view(request):
+    if request.method == "GET":
+        q = request.GET.get("q", "").strip()
+        qs = Product.objects.select_related("supplier").exclude(barcode__isnull=True).exclude(barcode="")
+        if q:
+            qs = qs.filter(Q(barcode__icontains=q) | Q(sku__icontains=q) | Q(name__icontains=q))
+        return JsonResponse({"items": [product_dict(p) for p in qs.order_by("name")[:200]]})
+    if request.method == "POST":
+        data = parse_body(request)
+        if data is None:
+            return JsonResponse({"detail": "Invalid JSON"}, status=400)
+        try:
+            product = Product.objects.get(sku=str(data.get("sku", "")).strip().upper())
+            code = str(data.get("barcode", "")).strip() or f"PARTORA-{product.sku}"
+            product.barcode = code
+            product.save(update_fields=["barcode", "updated_at"])
+        except Exception as exc:
+            return JsonResponse({"detail": f"Could not assign barcode: {exc}"}, status=400)
+        return JsonResponse({"item": product_dict(product)}, status=201)
+    return JsonResponse({"detail": "Method not allowed"}, status=405)
+
+@api_login_required
+def barcode_lookup_view(request):
+    code = request.GET.get("code", "").strip()
+    try:
+        product = Product.objects.select_related("supplier").get(Q(barcode=code) | Q(sku__iexact=code))
+    except Product.DoesNotExist:
+        return JsonResponse({"detail": "Part not found"}, status=404)
+    return JsonResponse({"item": product_dict(product)})
