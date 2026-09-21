@@ -7,13 +7,13 @@ from django.http import JsonResponse
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 from .auth import api_login_required, issue_token, roles_allowed
-from .models import Product, Quotation, StockMovement, Supplier, VehicleFitment, PurchaseOrder, PurchaseOrderItem, Warehouse, WarehouseStock, StockTransfer
+from .models import Product, Quotation, StockMovement, Supplier, VehicleFitment, PurchaseOrder, PurchaseOrderItem, Warehouse, WarehouseStock, StockTransfer, SalesOrder, Invoice
 from .serializers import product_dict, quotation_dict, supplier_dict
 
 ROLE_MODULES = {
-    "admin": ["dashboard", "inventory", "quotations", "suppliers", "stock", "barcodes", "fitments", "purchase_orders", "warehouses", "reorder"],
-    "manager": ["dashboard", "inventory", "quotations", "suppliers", "stock", "barcodes", "fitments", "purchase_orders", "warehouses", "reorder"],
-    "sales": ["dashboard", "inventory", "quotations", "barcodes", "fitments"],
+    "admin": ["dashboard", "inventory", "quotations", "suppliers", "stock", "barcodes", "fitments", "purchase_orders", "warehouses", "reorder", "sales_flow"],
+    "manager": ["dashboard", "inventory", "quotations", "suppliers", "stock", "barcodes", "fitments", "purchase_orders", "warehouses", "reorder", "sales_flow"],
+    "sales": ["dashboard", "inventory", "quotations", "barcodes", "fitments", "sales_flow"],
     "store": ["dashboard", "inventory", "stock", "barcodes", "fitments", "purchase_orders", "warehouses", "reorder"],
 }
 
@@ -321,4 +321,29 @@ def reorder_view(request):
         except Exception as exc:
             return JsonResponse({"detail":f"Could not create replenishment PO: {exc}"},status=400)
         return JsonResponse({"item":{"id":po.id,"po_no":po.po_no,"sku":product.sku,"supplier":product.supplier.name,"quantity":qty,"status":po.status}},status=201)
+    return JsonResponse({"detail":"Method not allowed"},status=405)
+
+@csrf_exempt
+@roles_allowed("admin", "manager", "sales")
+def sales_flow_view(request):
+    if request.method == "GET":
+        orders=[{"id":o.id,"order_no":o.order_no,"quote_no":o.quotation.quote_no if o.quotation else None,"customer_name":o.customer_name,"customer_company":o.customer_company,"total":float(o.total),"status":o.status,"invoice_no":getattr(getattr(o,"invoice",None),"invoice_no",None),"created_at":o.created_at.isoformat()} for o in SalesOrder.objects.select_related("quotation").order_by("-created_at")[:100]]
+        invoices=[{"id":i.id,"invoice_no":i.invoice_no,"order_no":i.sales_order.order_no,"customer":i.sales_order.customer_company or i.sales_order.customer_name,"total":float(i.total),"status":i.status,"due_date":i.due_date.isoformat()} for i in Invoice.objects.select_related("sales_order").order_by("-created_at")[:100]]
+        return JsonResponse({"orders":orders,"invoices":invoices})
+    if request.method == "POST":
+        data=parse_body(request) or {}; action=str(data.get("action","convert_quote"))
+        try:
+            if action == "convert_quote":
+                quote=Quotation.objects.get(id=int(data["quote_id"]))
+                order,created=SalesOrder.objects.get_or_create(quotation=quote,defaults={"order_no":f"SO-{timezone.now():%y%m%d}-{uuid4().hex[:4].upper()}","customer_name":quote.customer_name,"customer_company":quote.customer_company,"total":quote.total,"status":"confirmed","created_by":request.api_user})
+                quote.status="approved"; quote.save(update_fields=["status"])
+                item={"id":order.id,"order_no":order.order_no,"quote_no":quote.quote_no,"customer_name":order.customer_name,"customer_company":order.customer_company,"total":float(order.total),"status":order.status,"invoice_no":getattr(getattr(order,"invoice",None),"invoice_no",None),"created_at":order.created_at.isoformat()}
+            elif action == "invoice":
+                order=SalesOrder.objects.get(id=int(data["order_id"])); invoice,created=Invoice.objects.get_or_create(sales_order=order,defaults={"invoice_no":f"INV-{timezone.now():%y%m%d}-{uuid4().hex[:4].upper()}","total":order.total,"status":"issued","due_date":timezone.localdate()+timedelta(days=int(data.get("terms_days",30)))})
+                item={"id":invoice.id,"invoice_no":invoice.invoice_no,"order_no":order.order_no,"customer":order.customer_company or order.customer_name,"total":float(invoice.total),"status":invoice.status,"due_date":invoice.due_date.isoformat()}
+            else:
+                raise ValueError("Unknown action")
+        except Exception as exc:
+            return JsonResponse({"detail":f"Could not complete sales action: {exc}"},status=400)
+        return JsonResponse({"item":item,"action":action},status=201 if created else 200)
     return JsonResponse({"detail":"Method not allowed"},status=405)

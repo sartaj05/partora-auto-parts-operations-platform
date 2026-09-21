@@ -1,4 +1,4 @@
-import { demoAccounts, fitments, inventory, mockDashboard, modulesByRole, purchaseOrders, quotations, reorderSuggestions, stock, suppliers, warehouseState } from '../mock/data'
+import { demoAccounts, fitments, inventory, mockDashboard, modulesByRole, purchaseOrders, quotations, reorderSuggestions, salesFlow, stock, suppliers, warehouseState } from '../mock/data'
 
 const API_BASE = (import.meta.env.VITE_API_URL || '/api').replace(/\/$/, '')
 const NETWORK_MESSAGE = 'Backend unavailable. Demo mode is active.'
@@ -54,6 +54,7 @@ const fallback = {
   '/purchase-orders/': () => ({ items: purchaseOrders, count: purchaseOrders.length }),
   '/warehouses/': () => warehouseState,
   '/reorder/': () => ({ items: reorderSuggestions(), count: reorderSuggestions().length }),
+  '/sales-flow/': () => salesFlow,
 }
 
 export async function loadEndpoint(path, role) {
@@ -71,6 +72,10 @@ export async function loadEndpoint(path, role) {
 
 function createMock(path, payload, role) {
   const id = Date.now()
+  if (path === '/sales-flow/') {
+    if(payload.action==='convert_quote'){const q=quotations.find(x=>x.id===Number(payload.quote_id));if(!q)throw new Error('Quote not found');let item=salesFlow.orders.find(x=>x.quote_no===q.quote_no);if(!item){item={id:Date.now(),order_no:`SO-DEMO-${String(Date.now()).slice(-4)}`,quote_no:q.quote_no,customer_name:q.customer_name,customer_company:q.customer_company,total:q.total,status:'confirmed',invoice_no:null,created_at:new Date().toISOString()};salesFlow.orders.unshift(item)}return {item,action:'convert_quote'}}
+    if(payload.action==='invoice'){const o=salesFlow.orders.find(x=>x.id===Number(payload.order_id));if(!o)throw new Error('Order not found');let item=salesFlow.invoices.find(x=>x.order_no===o.order_no);if(!item){const d=new Date();d.setDate(d.getDate()+30);item={id:Date.now(),invoice_no:`INV-DEMO-${String(Date.now()).slice(-4)}`,order_no:o.order_no,customer:o.customer_company||o.customer_name,total:o.total,status:'issued',due_date:d.toISOString().slice(0,10)};salesFlow.invoices.unshift(item);o.invoice_no=item.invoice_no}return {item,action:'invoice'}}
+  }
   if (path === '/reorder/') {
     const product=inventory.find(x=>x.sku===String(payload.sku||'').toUpperCase());if(!product)throw new Error('SKU not found')
     const item={id:Date.now(),po_no:`PO-REORDER-${String(Date.now()).slice(-4)}`,sku:product.sku,supplier:product.supplier,quantity:Number(payload.quantity||product.reorder_qty||25),status:'approved'};purchaseOrders.unshift({...item,expected_date:null,total:item.quantity*product.price,line_count:1,received_lines:0,created_by:'Demo User'});return {item}

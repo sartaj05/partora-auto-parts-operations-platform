@@ -152,3 +152,23 @@ class StockTransfer(models.Model):
 
 # Feature 05: smarter replenishment quantity separate from alert threshold.
 Product.add_to_class("reorder_qty", models.PositiveIntegerField(default=25))
+
+class SalesOrder(models.Model):
+    STATUS_CHOICES = [("confirmed","Confirmed"),("fulfilled","Fulfilled"),("cancelled","Cancelled")]
+    order_no = models.CharField(max_length=30, unique=True)
+    quotation = models.OneToOneField(Quotation, on_delete=models.SET_NULL, null=True, blank=True, related_name="sales_order")
+    customer_name = models.CharField(max_length=140)
+    customer_company = models.CharField(max_length=140, blank=True)
+    total = models.DecimalField(max_digits=14, decimal_places=2)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="confirmed")
+    created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name="sales_orders")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+class Invoice(models.Model):
+    STATUS_CHOICES = [("issued","Issued"),("paid","Paid"),("overdue","Overdue"),("cancelled","Cancelled")]
+    invoice_no = models.CharField(max_length=30, unique=True)
+    sales_order = models.OneToOneField(SalesOrder, on_delete=models.PROTECT, related_name="invoice")
+    total = models.DecimalField(max_digits=14, decimal_places=2)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="issued")
+    due_date = models.DateField()
+    created_at = models.DateTimeField(auto_now_add=True)
