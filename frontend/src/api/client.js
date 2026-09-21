@@ -1,4 +1,4 @@
-import { demoAccounts, fitments, inventory, mockDashboard, modulesByRole, purchaseOrders, quotations, stock, suppliers } from '../mock/data'
+import { demoAccounts, fitments, inventory, mockDashboard, modulesByRole, purchaseOrders, quotations, stock, suppliers, warehouseState } from '../mock/data'
 
 const API_BASE = (import.meta.env.VITE_API_URL || '/api').replace(/\/$/, '')
 const NETWORK_MESSAGE = 'Backend unavailable. Demo mode is active.'
@@ -52,6 +52,7 @@ const fallback = {
   '/barcodes/': () => ({ items: inventory.filter(x => x.barcode) }),
   '/fitments/': () => ({ items: fitments, count: fitments.length }),
   '/purchase-orders/': () => ({ items: purchaseOrders, count: purchaseOrders.length }),
+  '/warehouses/': () => warehouseState,
 }
 
 export async function loadEndpoint(path, role) {
@@ -69,6 +70,10 @@ export async function loadEndpoint(path, role) {
 
 function createMock(path, payload, role) {
   const id = Date.now()
+  if (path === '/warehouses/') {
+    if(payload.action==='warehouse'){const item={id:Date.now(),code:String(payload.code||'').toUpperCase(),name:payload.name,address:payload.address||'',sku_count:0,units:0};warehouseState.warehouses.push(item);return {item}}
+    const item={id:Date.now(),reference:`TR-DEMO-${String(Date.now()).slice(-4)}`,from_warehouse:String(payload.from_warehouse||'').toUpperCase(),to_warehouse:String(payload.to_warehouse||'').toUpperCase(),sku:String(payload.sku||'').toUpperCase(),product:inventory.find(x=>x.sku===String(payload.sku||'').toUpperCase())?.name||'Demo part',quantity:Number(payload.quantity||1),status:'completed',created_at:new Date().toISOString()};warehouseState.transfers.unshift(item);return {item}
+  }
   if (path === '/purchase-orders/') {
     if(payload.action==='receive'){const po=purchaseOrders.find(x=>x.id===Number(payload.id));if(!po)throw new Error('PO not found');po.status='received';po.received_lines=po.line_count;return {item:po}}
     const product=inventory.find(x=>x.sku.toUpperCase()===String(payload.sku||'').toUpperCase());if(!product)throw new Error('SKU not found')

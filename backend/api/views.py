@@ -7,14 +7,14 @@ from django.http import JsonResponse
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 from .auth import api_login_required, issue_token, roles_allowed
-from .models import Product, Quotation, StockMovement, Supplier, VehicleFitment, PurchaseOrder, PurchaseOrderItem
+from .models import Product, Quotation, StockMovement, Supplier, VehicleFitment, PurchaseOrder, PurchaseOrderItem, Warehouse, WarehouseStock, StockTransfer
 from .serializers import product_dict, quotation_dict, supplier_dict
 
 ROLE_MODULES = {
-    "admin": ["dashboard", "inventory", "quotations", "suppliers", "stock", "barcodes", "fitments", "purchase_orders"],
-    "manager": ["dashboard", "inventory", "quotations", "suppliers", "stock", "barcodes", "fitments", "purchase_orders"],
+    "admin": ["dashboard", "inventory", "quotations", "suppliers", "stock", "barcodes", "fitments", "purchase_orders", "warehouses"],
+    "manager": ["dashboard", "inventory", "quotations", "suppliers", "stock", "barcodes", "fitments", "purchase_orders", "warehouses"],
     "sales": ["dashboard", "inventory", "quotations", "barcodes", "fitments"],
-    "store": ["dashboard", "inventory", "stock", "barcodes", "fitments", "purchase_orders"],
+    "store": ["dashboard", "inventory", "stock", "barcodes", "fitments", "purchase_orders", "warehouses"],
 }
 
 def parse_body(request):
@@ -271,4 +271,34 @@ def purchase_orders_view(request):
         except Exception as exc:
             return JsonResponse({"detail":f"Could not create purchase order: {exc}"},status=400)
         return JsonResponse({"item":{"id":po.id,"po_no":po.po_no,"supplier":po.supplier.name,"status":po.status,"expected_date":po.expected_date.isoformat() if po.expected_date else None,"total":float(po.total),"created_by":request.api_user.get_full_name() or request.api_user.username,"line_count":1,"received_lines":0}},status=201)
+    return JsonResponse({"detail":"Method not allowed"},status=405)
+
+@csrf_exempt
+@roles_allowed("admin", "manager", "store")
+def warehouses_view(request):
+    if request.method == "GET":
+        warehouses=Warehouse.objects.filter(active=True).order_by("code")
+        wh_items=[]
+        for wh in warehouses:
+            wh_items.append({"id":wh.id,"code":wh.code,"name":wh.name,"address":wh.address,"sku_count":wh.stocks.count(),"units":wh.stocks.aggregate(total=Sum("quantity"))["total"] or 0})
+        transfers=[{"id":t.id,"reference":t.reference,"from_warehouse":t.from_warehouse.code,"to_warehouse":t.to_warehouse.code,"sku":t.product.sku,"product":t.product.name,"quantity":t.quantity,"status":t.status,"created_at":t.created_at.isoformat()} for t in StockTransfer.objects.select_related("from_warehouse","to_warehouse","product").order_by("-created_at")[:40]]
+        return JsonResponse({"warehouses":wh_items,"transfers":transfers})
+    if request.method == "POST":
+        data=parse_body(request) or {}; action=str(data.get("action","transfer"))
+        if action == "warehouse":
+            try:
+                wh=Warehouse.objects.create(code=str(data["code"]).strip().upper(),name=str(data["name"]).strip(),address=str(data.get("address","")).strip())
+            except Exception as exc:
+                return JsonResponse({"detail":f"Could not create warehouse: {exc}"},status=400)
+            return JsonResponse({"item":{"id":wh.id,"code":wh.code,"name":wh.name,"address":wh.address,"sku_count":0,"units":0}},status=201)
+        try:
+            source=Warehouse.objects.get(code=str(data["from_warehouse"]).strip().upper()); target=Warehouse.objects.get(code=str(data["to_warehouse"]).strip().upper()); product=Product.objects.get(sku=str(data["sku"]).strip().upper()); qty=max(1,int(data.get("quantity",1)))
+            if source.id == target.id: raise ValueError("Source and destination must differ")
+            source_stock,_=WarehouseStock.objects.get_or_create(warehouse=source,product=product,defaults={"quantity":0}); target_stock,_=WarehouseStock.objects.get_or_create(warehouse=target,product=product,defaults={"quantity":0})
+            if source_stock.quantity < qty: raise ValueError("Insufficient stock at source warehouse")
+            source_stock.quantity-=qty; target_stock.quantity+=qty; source_stock.save(update_fields=["quantity"]); target_stock.save(update_fields=["quantity"])
+            transfer=StockTransfer.objects.create(reference=f"TR-{timezone.now():%y%m%d}-{uuid4().hex[:4].upper()}",from_warehouse=source,to_warehouse=target,product=product,quantity=qty,created_by=request.api_user)
+        except Exception as exc:
+            return JsonResponse({"detail":f"Could not transfer stock: {exc}"},status=400)
+        return JsonResponse({"item":{"id":transfer.id,"reference":transfer.reference,"from_warehouse":source.code,"to_warehouse":target.code,"sku":product.sku,"product":product.name,"quantity":qty,"status":"completed","created_at":transfer.created_at.isoformat()}},status=201)
     return JsonResponse({"detail":"Method not allowed"},status=405)
