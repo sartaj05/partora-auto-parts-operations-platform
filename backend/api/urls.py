@@ -12,4 +12,5 @@ urlpatterns = [
     path("stock/", views.stock_view),
     path("barcodes/", views.barcodes_view),
     path("barcodes/lookup/", views.barcode_lookup_view),
+    path("fitments/", views.fitments_view),
 ]

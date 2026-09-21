@@ -91,3 +91,16 @@ class StockMovement(models.Model):
 # Stored as a standard text code so the frontend can work with USB scanners,
 # phone camera integrations, QR values, EAN/UPC codes, or internal labels.
 Product.add_to_class("barcode", models.CharField(max_length=64, unique=True, blank=True, null=True))
+
+class VehicleFitment(models.Model):
+    product = models.ForeignKey(Product, on_delete=models.CASCADE, related_name="fitments")
+    make = models.CharField(max_length=80)
+    model = models.CharField(max_length=80)
+    year_from = models.PositiveIntegerField()
+    year_to = models.PositiveIntegerField()
+    variant = models.CharField(max_length=100, blank=True)
+    engine = models.CharField(max_length=80, blank=True)
+    oem_number = models.CharField(max_length=80, blank=True)
+
+    def __str__(self):
+        return f"{self.make} {self.model} {self.year_from}-{self.year_to} / {self.product.sku}"

@@ -6,10 +6,10 @@ export const demoAccounts = [
 ]
 
 export const modulesByRole = {
-  admin: ['dashboard', 'inventory', 'quotations', 'suppliers', 'stock', 'barcodes'],
-  manager: ['dashboard', 'inventory', 'quotations', 'suppliers', 'stock', 'barcodes'],
-  sales: ['dashboard', 'inventory', 'quotations', 'barcodes'],
-  store: ['dashboard', 'inventory', 'stock', 'barcodes'],
+  admin: ['dashboard', 'inventory', 'quotations', 'suppliers', 'stock', 'barcodes', 'fitments'],
+  manager: ['dashboard', 'inventory', 'quotations', 'suppliers', 'stock', 'barcodes', 'fitments'],
+  sales: ['dashboard', 'inventory', 'quotations', 'barcodes', 'fitments'],
+  store: ['dashboard', 'inventory', 'stock', 'barcodes', 'fitments'],
 }
 
 export const inventory = [
@@ -57,3 +57,9 @@ export function mockDashboard(role) {
     low_stock_items: inventory.filter(x => x.stock_status !== 'healthy'),
   }
 }
+
+export const fitments = [
+  { id:1, sku:'BRK-1048', product:'Ceramic Brake Pad Set', make:'Maruti Suzuki', model:'Swift', year_from:2018, year_to:2026, variant:'Petrol / AMT', engine:'1.2L', oem_number:'55810M68P00' },
+  { id:2, sku:'FLT-2210', product:'Engine Oil Filter', make:'Hyundai', model:'i20', year_from:2020, year_to:2026, variant:'Petrol', engine:'1.2L', oem_number:'26300-35505' },
+  { id:3, sku:'HLM-H7', product:'H7 LED Headlamp Pair', make:'Universal', model:'H7 socket', year_from:2005, year_to:2026, variant:'12V', engine:'', oem_number:'H7' },
+]
