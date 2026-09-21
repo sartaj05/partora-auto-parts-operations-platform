@@ -17,6 +17,8 @@ async function request(path, options = {}) {
       ...(options.headers || {}),
     },
   })
+  const contentType = response.headers.get('content-type') || ''
+  if (!contentType.includes('application/json')) throw new Error('API is not connected')
   const body = await response.json().catch(() => ({}))
   if (!response.ok) throw Object.assign(new Error(body.detail || 'Request failed'), { status: response.status })
   return body
@@ -25,9 +27,10 @@ async function request(path, options = {}) {
 export async function login(email, password) {
   try {
     const result = await request('/auth/login/', { method: 'POST', body: JSON.stringify({ email, password }) })
+    if (!result?.user || !result?.token) throw new Error('API is not connected')
     return { ...result, demoMode: false }
   } catch (error) {
-    if (error.status) throw error
+    if (error.status && error.status !== 404 && error.status < 500) throw error
     await sleep()
     const account = demoAccounts.find(a => a.email === email.toLowerCase() && a.password === password)
     if (!account) throw new Error('Invalid demo email or password')
