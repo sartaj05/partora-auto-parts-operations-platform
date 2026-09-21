@@ -7,14 +7,14 @@ from django.http import JsonResponse
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 from .auth import api_login_required, issue_token, roles_allowed
-from .models import Product, Quotation, StockMovement, Supplier
+from .models import Product, Quotation, StockMovement, Supplier, VehicleFitment
 from .serializers import product_dict, quotation_dict, supplier_dict
 
 ROLE_MODULES = {
-    "admin": ["dashboard", "inventory", "quotations", "suppliers", "stock", "barcodes"],
-    "manager": ["dashboard", "inventory", "quotations", "suppliers", "stock", "barcodes"],
-    "sales": ["dashboard", "inventory", "quotations", "barcodes"],
-    "store": ["dashboard", "inventory", "stock", "barcodes"],
+    "admin": ["dashboard", "inventory", "quotations", "suppliers", "stock", "barcodes", "fitments"],
+    "manager": ["dashboard", "inventory", "quotations", "suppliers", "stock", "barcodes", "fitments"],
+    "sales": ["dashboard", "inventory", "quotations", "barcodes", "fitments"],
+    "store": ["dashboard", "inventory", "stock", "barcodes", "fitments"],
 }
 
 def parse_body(request):
@@ -215,3 +215,23 @@ def barcode_lookup_view(request):
     except Product.DoesNotExist:
         return JsonResponse({"detail": "Part not found"}, status=404)
     return JsonResponse({"item": product_dict(product)})
+
+@csrf_exempt
+@api_login_required
+def fitments_view(request):
+    if request.method == "GET":
+        q = request.GET.get("q", "").strip()
+        qs = VehicleFitment.objects.select_related("product").order_by("make", "model", "year_from")
+        if q:
+            qs = qs.filter(Q(make__icontains=q) | Q(model__icontains=q) | Q(variant__icontains=q) | Q(engine__icontains=q) | Q(oem_number__icontains=q) | Q(product__sku__icontains=q) | Q(product__name__icontains=q))
+        items = [{"id": f.id, "sku": f.product.sku, "product": f.product.name, "make": f.make, "model": f.model, "year_from": f.year_from, "year_to": f.year_to, "variant": f.variant, "engine": f.engine, "oem_number": f.oem_number} for f in qs[:250]]
+        return JsonResponse({"items": items, "count": qs.count()})
+    if request.method == "POST":
+        data = parse_body(request) or {}
+        try:
+            product = Product.objects.get(sku=str(data.get("sku", "")).strip().upper())
+            fitment = VehicleFitment.objects.create(product=product, make=str(data["make"]).strip(), model=str(data["model"]).strip(), year_from=int(data["year_from"]), year_to=int(data.get("year_to") or data["year_from"]), variant=str(data.get("variant", "")).strip(), engine=str(data.get("engine", "")).strip(), oem_number=str(data.get("oem_number", "")).strip())
+        except Exception as exc:
+            return JsonResponse({"detail": f"Could not add fitment: {exc}"}, status=400)
+        return JsonResponse({"item": {"id": fitment.id, "sku": product.sku, "product": product.name, "make": fitment.make, "model": fitment.model, "year_from": fitment.year_from, "year_to": fitment.year_to, "variant": fitment.variant, "engine": fitment.engine, "oem_number": fitment.oem_number}}, status=201)
+    return JsonResponse({"detail": "Method not allowed"}, status=405)

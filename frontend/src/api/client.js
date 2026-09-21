@@ -1,4 +1,4 @@
-import { demoAccounts, inventory, mockDashboard, modulesByRole, quotations, stock, suppliers } from '../mock/data'
+import { demoAccounts, fitments, inventory, mockDashboard, modulesByRole, quotations, stock, suppliers } from '../mock/data'
 
 const API_BASE = (import.meta.env.VITE_API_URL || '/api').replace(/\/$/, '')
 const NETWORK_MESSAGE = 'Backend unavailable. Demo mode is active.'
@@ -50,6 +50,7 @@ const fallback = {
   '/suppliers/': () => ({ items: suppliers, count: suppliers.length }),
   '/stock/': () => ({ items: stock }),
   '/barcodes/': () => ({ items: inventory.filter(x => x.barcode) }),
+  '/fitments/': () => ({ items: fitments, count: fitments.length }),
 }
 
 export async function loadEndpoint(path, role) {
@@ -67,6 +68,12 @@ export async function loadEndpoint(path, role) {
 
 function createMock(path, payload, role) {
   const id = Date.now()
+  if (path === '/fitments/') {
+    const product = inventory.find(x => x.sku.toUpperCase() === String(payload.sku || '').toUpperCase())
+    if (!product) throw new Error('SKU not found in demo inventory')
+    const item={id:Date.now(),sku:product.sku,product:product.name,make:payload.make,model:payload.model,year_from:Number(payload.year_from),year_to:Number(payload.year_to||payload.year_from),variant:payload.variant||'',engine:payload.engine||'',oem_number:payload.oem_number||''}
+    fitments.unshift(item); return { item }
+  }
   if (path === '/barcodes/') {
     const product = inventory.find(x => x.sku.toUpperCase() === String(payload.sku || '').toUpperCase())
     if (!product) throw new Error('SKU not found in demo inventory')

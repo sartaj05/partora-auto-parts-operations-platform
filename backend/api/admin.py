@@ -6,3 +6,5 @@ admin.site.register(Product)
 admin.site.register(Supplier)
 admin.site.register(Quotation)
 admin.site.register(StockMovement)
+from .models import VehicleFitment
+admin.site.register(VehicleFitment)
