@@ -22,3 +22,7 @@ from .models import Customer
 admin.site.register(Customer)
 from .models import PriceRule
 admin.site.register(PriceRule)
+from .models import Notification, ApprovalRequest, AuditLog
+admin.site.register(Notification)
+admin.site.register(ApprovalRequest)
+admin.site.register(AuditLog)

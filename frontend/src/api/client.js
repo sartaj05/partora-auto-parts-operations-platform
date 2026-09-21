@@ -1,4 +1,4 @@
-import { analyticsData, customers, demoAccounts, fitments, inventory, mockDashboard, modulesByRole, priceRules, purchaseOrders, quotations, reorderSuggestions, salesFlow, stock, suppliers, warehouseState } from '../mock/data'
+import { analyticsData, customers, demoAccounts, fitments, governanceState, inventory, mockDashboard, modulesByRole, priceRules, purchaseOrders, quotations, reorderSuggestions, salesFlow, stock, suppliers, warehouseState } from '../mock/data'
 
 const API_BASE = (import.meta.env.VITE_API_URL || '/api').replace(/\/$/, '')
 const NETWORK_MESSAGE = 'Backend unavailable. Demo mode is active.'
@@ -58,6 +58,7 @@ const fallback = {
   '/customers/': () => ({ items: customers, count: customers.length }),
   '/pricing/': () => ({ items: priceRules }),
   '/analytics/': () => analyticsData(),
+  '/governance/': () => governanceState,
 }
 
 export async function loadEndpoint(path, role) {
@@ -75,6 +76,11 @@ export async function loadEndpoint(path, role) {
 
 function createMock(path, payload, role) {
   const id = Date.now()
+  if (path === '/governance/') {
+    if(payload.action==='request'){const item={id:Date.now(),kind:payload.kind||'purchase',reference:payload.reference,amount:Number(payload.amount||0),status:'pending',requested_by:'Demo User',reviewed_by:null,notes:payload.notes||'',created_at:new Date().toISOString()};governanceState.approvals.unshift(item);return {item}}
+    if(['approve','reject'].includes(payload.action)){const item=governanceState.approvals.find(x=>x.id===Number(payload.id));if(!item)throw new Error('Approval not found');item.status=payload.action==='approve'?'approved':'rejected';item.reviewed_by='Demo Manager';return {item}}
+    if(payload.action==='read'){const item=governanceState.notifications.find(x=>x.id===Number(payload.id));if(item)item.read=true;return {item:{id:Number(payload.id),read:true}}}
+  }
   if (path === '/pricing/') {
     if(payload.action==='preview'){const product=inventory.find(x=>x.sku===String(payload.sku||'').toUpperCase());if(!product)throw new Error('SKU not found');const type=payload.customer_type||'retail';const qty=Math.max(1,Number(payload.quantity||1));const base=type==='dealer'?(product.dealer_price||product.price):(['fleet','workshop'].includes(type)?(product.wholesale_price||product.price):product.price);const rule=priceRules.filter(r=>r.active&&r.customer_type===type&&r.min_qty<=qty).sort((a,b)=>b.min_qty-a.min_qty)[0];const discount=rule?.discount_percent||0;const unit=Math.round(base*(1-discount/100)*100)/100;return {item:{sku:product.sku,name:product.name,customer_type:type,quantity:qty,base_price:base,discount_percent:discount,unit_price:unit,line_total:unit*qty,margin_percent:product.cost_price?Math.round((unit-product.cost_price)/unit*1000)/10:null,rule:rule?.name||null}}}
     const item={id:Date.now(),name:payload.name,customer_type:payload.customer_type||'dealer',min_qty:Number(payload.min_qty||1),discount_percent:Number(payload.discount_percent||0),active:true};priceRules.push(item);return {item}

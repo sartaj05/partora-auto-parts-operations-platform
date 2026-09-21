@@ -6,10 +6,10 @@ export const demoAccounts = [
 ]
 
 export const modulesByRole = {
-  admin: ['dashboard', 'inventory', 'quotations', 'suppliers', 'stock', 'barcodes', 'fitments', 'purchase_orders', 'warehouses', 'reorder', 'sales_flow', 'crm', 'pricing', 'analytics'],
-  manager: ['dashboard', 'inventory', 'quotations', 'suppliers', 'stock', 'barcodes', 'fitments', 'purchase_orders', 'warehouses', 'reorder', 'sales_flow', 'crm', 'pricing', 'analytics'],
-  sales: ['dashboard', 'inventory', 'quotations', 'barcodes', 'fitments', 'sales_flow', 'crm', 'pricing', 'analytics'],
-  store: ['dashboard', 'inventory', 'stock', 'barcodes', 'fitments', 'purchase_orders', 'warehouses', 'reorder'],
+  admin: ['dashboard', 'inventory', 'quotations', 'suppliers', 'stock', 'barcodes', 'fitments', 'purchase_orders', 'warehouses', 'reorder', 'sales_flow', 'crm', 'pricing', 'analytics', 'governance'],
+  manager: ['dashboard', 'inventory', 'quotations', 'suppliers', 'stock', 'barcodes', 'fitments', 'purchase_orders', 'warehouses', 'reorder', 'sales_flow', 'crm', 'pricing', 'analytics', 'governance'],
+  sales: ['dashboard', 'inventory', 'quotations', 'barcodes', 'fitments', 'sales_flow', 'crm', 'pricing', 'analytics', 'governance'],
+  store: ['dashboard', 'inventory', 'stock', 'barcodes', 'fitments', 'purchase_orders', 'warehouses', 'reorder', 'governance'],
 }
 
 export const inventory = [
@@ -112,4 +112,18 @@ export function analyticsData(){
     metrics:{sales_total:salesFlow.orders.reduce((s,o)=>s+o.total,0),invoice_total:salesFlow.invoices.reduce((s,i)=>s+i.total,0),inventory_value:inventoryValue,inventory_cost:inventoryCost,estimated_inventory_margin:Math.max(0,inventoryValue-inventoryCost),outstanding:customers.reduce((s,c)=>s+c.outstanding_balance,0),quote_conversion:quotations.length?Math.round(quotations.filter(q=>q.status==='approved').length/quotations.length*1000)/10:0,low_stock:inventory.filter(p=>p.stock_qty<=p.reorder_level).length},
     categories:Object.entries(counts).map(([label,value])=>({label,value})),suppliers:Object.entries(vendor).map(([label,value])=>({label,value})),top_customers:[...customers].sort((a,b)=>b.outstanding_balance-a.outstanding_balance).map(c=>({label:c.company||c.name,value:c.outstanding_balance})).slice(0,6)
   }
+}
+
+export const governanceState = {
+  notifications:[
+    { id:1, title:'Low stock needs attention', message:'RLY-24V4 is out of stock and has a preferred supplier.', read:false, created_at:'2026-09-21T11:45:00+05:30' },
+    { id:2, title:'Purchase order expected tomorrow', message:'PO-260920-90BD is due from VoltEdge Electricals.', read:false, created_at:'2026-09-21T10:30:00+05:30' },
+  ],
+  approvals:[
+    { id:1, kind:'discount', reference:'QT-260921-104 / 9% discount', amount:1650, status:'pending', requested_by:'Rohan Sales', reviewed_by:null, notes:'Fleet follow-up opportunity', created_at:'2026-09-21T11:20:00+05:30' },
+  ],
+  audits:[
+    { id:1, user:'Kabir Store', action:'stock movement', entity:'product', entity_id:'6', detail:'out 18 / INV-5880', created_at:'2026-09-21T09:50:00+05:30' },
+    { id:2, user:'Rohan Sales', action:'create', entity:'quotation', entity_id:'1', detail:'QT-260921-104', created_at:'2026-09-21T09:18:00+05:30' },
+  ],
 }

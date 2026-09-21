@@ -20,4 +20,5 @@ urlpatterns = [
     path("customers/", views.customers_view),
     path("pricing/", views.pricing_view),
     path("analytics/", views.analytics_view),
+    path("governance/", views.governance_view),
 ]
