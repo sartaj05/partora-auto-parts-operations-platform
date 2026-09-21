@@ -15,3 +15,6 @@ from .models import Warehouse, WarehouseStock, StockTransfer
 admin.site.register(Warehouse)
 admin.site.register(WarehouseStock)
 admin.site.register(StockTransfer)
+from .models import SalesOrder, Invoice
+admin.site.register(SalesOrder)
+admin.site.register(Invoice)
