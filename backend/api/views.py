@@ -2,7 +2,7 @@ import json
 from datetime import date, timedelta
 from uuid import uuid4
 from django.contrib.auth import authenticate
-from django.db.models import DecimalField, ExpressionWrapper, F, Q, Sum
+from django.db.models import Count, DecimalField, ExpressionWrapper, F, Q, Sum
 from django.http import JsonResponse
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
@@ -11,9 +11,9 @@ from .models import Product, Quotation, StockMovement, Supplier, VehicleFitment,
 from .serializers import product_dict, quotation_dict, supplier_dict
 
 ROLE_MODULES = {
-    "admin": ["dashboard", "inventory", "quotations", "suppliers", "stock", "barcodes", "fitments", "purchase_orders", "warehouses", "reorder", "sales_flow", "crm", "pricing"],
-    "manager": ["dashboard", "inventory", "quotations", "suppliers", "stock", "barcodes", "fitments", "purchase_orders", "warehouses", "reorder", "sales_flow", "crm", "pricing"],
-    "sales": ["dashboard", "inventory", "quotations", "barcodes", "fitments", "sales_flow", "crm", "pricing"],
+    "admin": ["dashboard", "inventory", "quotations", "suppliers", "stock", "barcodes", "fitments", "purchase_orders", "warehouses", "reorder", "sales_flow", "crm", "pricing", "analytics"],
+    "manager": ["dashboard", "inventory", "quotations", "suppliers", "stock", "barcodes", "fitments", "purchase_orders", "warehouses", "reorder", "sales_flow", "crm", "pricing", "analytics"],
+    "sales": ["dashboard", "inventory", "quotations", "barcodes", "fitments", "sales_flow", "crm", "pricing", "analytics"],
     "store": ["dashboard", "inventory", "stock", "barcodes", "fitments", "purchase_orders", "warehouses", "reorder"],
 }
 
@@ -390,3 +390,17 @@ def pricing_view(request):
             return JsonResponse({"detail":f"Could not create price rule: {exc}"},status=400)
         return JsonResponse({"item":{"id":rule.id,"name":rule.name,"customer_type":rule.customer_type,"min_qty":rule.min_qty,"discount_percent":float(rule.discount_percent),"active":rule.active}},status=201)
     return JsonResponse({"detail":"Method not allowed"},status=405)
+
+@roles_allowed("admin", "manager", "sales")
+def analytics_view(request):
+    products=list(Product.objects.all())
+    inventory_value=sum(float(p.price)*p.stock_qty for p in products)
+    inventory_cost=sum(float(p.cost_price or 0)*p.stock_qty for p in products)
+    sales_total=float(SalesOrder.objects.exclude(status="cancelled").aggregate(total=Sum("total"))["total"] or 0)
+    invoice_total=float(Invoice.objects.exclude(status="cancelled").aggregate(total=Sum("total"))["total"] or 0)
+    outstanding=float(Customer.objects.filter(active=True).aggregate(total=Sum("outstanding_balance"))["total"] or 0)
+    quotes_total=Quotation.objects.count(); approved=Quotation.objects.filter(status="approved").count()
+    categories=[{"label":row["category"],"value":row["count"]} for row in Product.objects.values("category").annotate(count=Count("id")).order_by("-count")]
+    suppliers=[{"label":row["supplier__name"] or "Unassigned","value":row["count"]} for row in Product.objects.values("supplier__name").annotate(count=Count("id")).order_by("-count")[:6]]
+    top_customers=[{"label":c.company or c.name,"value":float(c.outstanding_balance)} for c in Customer.objects.filter(active=True).order_by("-outstanding_balance")[:6]]
+    return JsonResponse({"metrics":{"sales_total":sales_total,"invoice_total":invoice_total,"inventory_value":inventory_value,"inventory_cost":inventory_cost,"estimated_inventory_margin":max(0,inventory_value-inventory_cost),"outstanding":outstanding,"quote_conversion":round((approved/quotes_total*100),1) if quotes_total else 0,"low_stock":sum(1 for p in products if p.stock_qty<=p.reorder_level)},"categories":categories,"suppliers":suppliers,"top_customers":top_customers})

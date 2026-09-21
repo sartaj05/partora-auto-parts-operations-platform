@@ -1,4 +1,4 @@
-import { customers, demoAccounts, fitments, inventory, mockDashboard, modulesByRole, priceRules, purchaseOrders, quotations, reorderSuggestions, salesFlow, stock, suppliers, warehouseState } from '../mock/data'
+import { analyticsData, customers, demoAccounts, fitments, inventory, mockDashboard, modulesByRole, priceRules, purchaseOrders, quotations, reorderSuggestions, salesFlow, stock, suppliers, warehouseState } from '../mock/data'
 
 const API_BASE = (import.meta.env.VITE_API_URL || '/api').replace(/\/$/, '')
 const NETWORK_MESSAGE = 'Backend unavailable. Demo mode is active.'
@@ -57,6 +57,7 @@ const fallback = {
   '/sales-flow/': () => salesFlow,
   '/customers/': () => ({ items: customers, count: customers.length }),
   '/pricing/': () => ({ items: priceRules }),
+  '/analytics/': () => analyticsData(),
 }
 
 export async function loadEndpoint(path, role) {

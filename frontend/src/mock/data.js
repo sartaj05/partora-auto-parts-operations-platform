@@ -6,9 +6,9 @@ export const demoAccounts = [
 ]
 
 export const modulesByRole = {
-  admin: ['dashboard', 'inventory', 'quotations', 'suppliers', 'stock', 'barcodes', 'fitments', 'purchase_orders', 'warehouses', 'reorder', 'sales_flow', 'crm', 'pricing'],
-  manager: ['dashboard', 'inventory', 'quotations', 'suppliers', 'stock', 'barcodes', 'fitments', 'purchase_orders', 'warehouses', 'reorder', 'sales_flow', 'crm', 'pricing'],
-  sales: ['dashboard', 'inventory', 'quotations', 'barcodes', 'fitments', 'sales_flow', 'crm', 'pricing'],
+  admin: ['dashboard', 'inventory', 'quotations', 'suppliers', 'stock', 'barcodes', 'fitments', 'purchase_orders', 'warehouses', 'reorder', 'sales_flow', 'crm', 'pricing', 'analytics'],
+  manager: ['dashboard', 'inventory', 'quotations', 'suppliers', 'stock', 'barcodes', 'fitments', 'purchase_orders', 'warehouses', 'reorder', 'sales_flow', 'crm', 'pricing', 'analytics'],
+  sales: ['dashboard', 'inventory', 'quotations', 'barcodes', 'fitments', 'sales_flow', 'crm', 'pricing', 'analytics'],
   store: ['dashboard', 'inventory', 'stock', 'barcodes', 'fitments', 'purchase_orders', 'warehouses', 'reorder'],
 }
 
@@ -102,3 +102,14 @@ export const priceRules = [
   { id:2, name:'Fleet bulk 25+', customer_type:'fleet', min_qty:25, discount_percent:7.5, active:true },
   { id:3, name:'Workshop pack 12+', customer_type:'workshop', min_qty:12, discount_percent:5, active:true },
 ]
+
+export function analyticsData(){
+  const inventoryValue=inventory.reduce((s,p)=>s+p.price*p.stock_qty,0)
+  const inventoryCost=inventory.reduce((s,p)=>s+(p.cost_price||0)*p.stock_qty,0)
+  const counts={}; inventory.forEach(p=>{counts[p.category]=(counts[p.category]||0)+1})
+  const vendor={}; inventory.forEach(p=>{vendor[p.supplier]=(vendor[p.supplier]||0)+1})
+  return {
+    metrics:{sales_total:salesFlow.orders.reduce((s,o)=>s+o.total,0),invoice_total:salesFlow.invoices.reduce((s,i)=>s+i.total,0),inventory_value:inventoryValue,inventory_cost:inventoryCost,estimated_inventory_margin:Math.max(0,inventoryValue-inventoryCost),outstanding:customers.reduce((s,c)=>s+c.outstanding_balance,0),quote_conversion:quotations.length?Math.round(quotations.filter(q=>q.status==='approved').length/quotations.length*1000)/10:0,low_stock:inventory.filter(p=>p.stock_qty<=p.reorder_level).length},
+    categories:Object.entries(counts).map(([label,value])=>({label,value})),suppliers:Object.entries(vendor).map(([label,value])=>({label,value})),top_customers:[...customers].sort((a,b)=>b.outstanding_balance-a.outstanding_balance).map(c=>({label:c.company||c.name,value:c.outstanding_balance})).slice(0,6)
+  }
+}
