@@ -5,6 +5,7 @@ services:
       DJANGO_DEBUG: "0"
       DJANGO_ALLOWED_HOSTS: "localhost,127.0.0.1,backend"
       DJANGO_SECRET_KEY: "replace-this-for-real-deployment"
+      DJANGO_DB_PATH: "/app/data/db.sqlite3"
     volumes:
       - partora_db:/app/data
 
