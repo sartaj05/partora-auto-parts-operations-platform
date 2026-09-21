@@ -7,13 +7,13 @@ from django.http import JsonResponse
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 from .auth import api_login_required, issue_token, roles_allowed
-from .models import Product, Quotation, StockMovement, Supplier, VehicleFitment, PurchaseOrder, PurchaseOrderItem, Warehouse, WarehouseStock, StockTransfer, SalesOrder, Invoice
+from .models import Product, Quotation, StockMovement, Supplier, VehicleFitment, PurchaseOrder, PurchaseOrderItem, Warehouse, WarehouseStock, StockTransfer, SalesOrder, Invoice, Customer
 from .serializers import product_dict, quotation_dict, supplier_dict
 
 ROLE_MODULES = {
-    "admin": ["dashboard", "inventory", "quotations", "suppliers", "stock", "barcodes", "fitments", "purchase_orders", "warehouses", "reorder", "sales_flow"],
-    "manager": ["dashboard", "inventory", "quotations", "suppliers", "stock", "barcodes", "fitments", "purchase_orders", "warehouses", "reorder", "sales_flow"],
-    "sales": ["dashboard", "inventory", "quotations", "barcodes", "fitments", "sales_flow"],
+    "admin": ["dashboard", "inventory", "quotations", "suppliers", "stock", "barcodes", "fitments", "purchase_orders", "warehouses", "reorder", "sales_flow", "crm"],
+    "manager": ["dashboard", "inventory", "quotations", "suppliers", "stock", "barcodes", "fitments", "purchase_orders", "warehouses", "reorder", "sales_flow", "crm"],
+    "sales": ["dashboard", "inventory", "quotations", "barcodes", "fitments", "sales_flow", "crm"],
     "store": ["dashboard", "inventory", "stock", "barcodes", "fitments", "purchase_orders", "warehouses", "reorder"],
 }
 
@@ -346,4 +346,21 @@ def sales_flow_view(request):
         except Exception as exc:
             return JsonResponse({"detail":f"Could not complete sales action: {exc}"},status=400)
         return JsonResponse({"item":item,"action":action},status=201 if created else 200)
+    return JsonResponse({"detail":"Method not allowed"},status=405)
+
+@csrf_exempt
+@roles_allowed("admin", "manager", "sales")
+def customers_view(request):
+    if request.method == "GET":
+        q=request.GET.get("q","").strip(); qs=Customer.objects.filter(active=True).order_by("company","name")
+        if q: qs=qs.filter(Q(name__icontains=q)|Q(company__icontains=q)|Q(email__icontains=q)|Q(phone__icontains=q)|Q(customer_type__icontains=q))
+        items=[{"id":c.id,"name":c.name,"company":c.company,"email":c.email,"phone":c.phone,"customer_type":c.customer_type,"credit_limit":float(c.credit_limit),"payment_terms_days":c.payment_terms_days,"outstanding_balance":float(c.outstanding_balance),"notes":c.notes} for c in qs[:250]]
+        return JsonResponse({"items":items,"count":qs.count()})
+    if request.method == "POST":
+        data=parse_body(request) or {}
+        try:
+            c=Customer.objects.create(name=str(data["name"]).strip(),company=str(data.get("company","")).strip(),email=str(data.get("email","")).strip(),phone=str(data.get("phone","")).strip(),customer_type=str(data.get("customer_type","retail")),credit_limit=float(data.get("credit_limit",0) or 0),payment_terms_days=int(data.get("payment_terms_days",0) or 0),outstanding_balance=float(data.get("outstanding_balance",0) or 0),notes=str(data.get("notes","")).strip())
+        except Exception as exc:
+            return JsonResponse({"detail":f"Could not add customer: {exc}"},status=400)
+        return JsonResponse({"item":{"id":c.id,"name":c.name,"company":c.company,"email":c.email,"phone":c.phone,"customer_type":c.customer_type,"credit_limit":float(c.credit_limit),"payment_terms_days":c.payment_terms_days,"outstanding_balance":float(c.outstanding_balance),"notes":c.notes}},status=201)
     return JsonResponse({"detail":"Method not allowed"},status=405)

@@ -6,9 +6,9 @@ export const demoAccounts = [
 ]
 
 export const modulesByRole = {
-  admin: ['dashboard', 'inventory', 'quotations', 'suppliers', 'stock', 'barcodes', 'fitments', 'purchase_orders', 'warehouses', 'reorder', 'sales_flow'],
-  manager: ['dashboard', 'inventory', 'quotations', 'suppliers', 'stock', 'barcodes', 'fitments', 'purchase_orders', 'warehouses', 'reorder', 'sales_flow'],
-  sales: ['dashboard', 'inventory', 'quotations', 'barcodes', 'fitments', 'sales_flow'],
+  admin: ['dashboard', 'inventory', 'quotations', 'suppliers', 'stock', 'barcodes', 'fitments', 'purchase_orders', 'warehouses', 'reorder', 'sales_flow', 'crm'],
+  manager: ['dashboard', 'inventory', 'quotations', 'suppliers', 'stock', 'barcodes', 'fitments', 'purchase_orders', 'warehouses', 'reorder', 'sales_flow', 'crm'],
+  sales: ['dashboard', 'inventory', 'quotations', 'barcodes', 'fitments', 'sales_flow', 'crm'],
   store: ['dashboard', 'inventory', 'stock', 'barcodes', 'fitments', 'purchase_orders', 'warehouses', 'reorder'],
 }
 
@@ -90,3 +90,9 @@ export const salesFlow = {
   ],
   invoices: [],
 }
+
+export const customers = [
+  { id:1, name:'Anil Verma', company:'Metro Garage', email:'anil@metrogarage.demo', phone:'+91 98111 10001', customer_type:'workshop', credit_limit:100000, payment_terms_days:15, outstanding_balance:18450, notes:'Regular brake and service parts buyer.' },
+  { id:2, name:'Priya Nair', company:'Northline Repairs', email:'priya@northline.demo', phone:'+91 98111 10002', customer_type:'dealer', credit_limit:250000, payment_terms_days:30, outstanding_balance:32600, notes:'Priority dealer pricing.' },
+  { id:3, name:'Imran Sheikh', company:'Rapid Fleet Care', email:'imran@rapidfleet.demo', phone:'+91 98111 10003', customer_type:'fleet', credit_limit:400000, payment_terms_days:30, outstanding_balance:12780, notes:'Fleet maintenance account.' },
+]
