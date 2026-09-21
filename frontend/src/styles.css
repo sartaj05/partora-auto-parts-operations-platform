@@ -82,3 +82,41 @@ h1,h2,h3 { font-family: Manrope, sans-serif; margin: 0; letter-spacing: -.04em; 
 .footer { min-height: 110px; display: flex; align-items: center; justify-content: space-between; border-top: 1px solid var(--line); color: var(--muted); font-size: 13px; }
 @media (max-width: 900px) { .site-nav a:not(.button) { display:none; } .hero { grid-template-columns: 1fr; padding-top: 54px; } .feature-grid { grid-template-columns: repeat(2,1fr); } .proof-grid { grid-template-columns: repeat(2,1fr); padding: 22px 0; gap: 22px; } .trust-card { grid-template-columns: 1fr; } }
 @media (max-width: 600px) { .container { width:min(100% - 24px,1160px); } .site-header { height:68px; } .hero h1 { font-size: 46px; } .hero-actions { flex-direction:column; align-items:stretch; } .hero-panel { padding:14px; } .feature-grid { grid-template-columns:1fr; } .proof-grid { grid-template-columns:1fr 1fr; } .proof-grid div { padding-left:14px; } .trust-card { padding:28px; } .footer { flex-direction:column; justify-content:center; gap:12px; } }
+
+/* Login */
+.login-layout { min-height:100vh; display:grid; grid-template-columns:.88fr 1.12fr; background:#fff; }
+.login-aside { background:#2b392f; color:white; padding:42px 7vw 48px; display:flex; flex-direction:column; position:relative; overflow:hidden; }
+.login-aside:after { content:''; position:absolute; width:420px; height:420px; border:1px solid rgba(255,255,255,.11); border-radius:50%; right:-170px; bottom:-100px; box-shadow:0 0 0 70px rgba(255,255,255,.025),0 0 0 140px rgba(255,255,255,.018); }
+.brand.inverse { color:white; position:relative; z-index:1; }
+.brand-mark.light { background:#edf1e8; color:#2b392f; }
+.login-aside-copy { margin:auto 0; max-width:560px; position:relative; z-index:1; }
+.eyebrow.pale { color:#b9ceb9; }
+.login-aside h1 { font-size:clamp(44px,5vw,72px); line-height:1.02; margin:18px 0; }
+.login-aside-copy p { color:#c3cec5; line-height:1.7; font-size:17px; max-width:480px; }
+.aside-note { display:flex; gap:12px; align-items:flex-start; border-top:1px solid rgba(255,255,255,.12); padding-top:24px; color:#bdc9bf; position:relative; z-index:1; }
+.aside-note > span { width:28px; height:28px; display:grid; place-items:center; border-radius:50%; background:#496451; color:white; }
+.aside-note p { margin:0; line-height:1.6; font-size:13px; }
+.aside-note b { color:white; }
+.login-main { display:grid; place-items:center; padding:40px 24px; background:#fbfcf9; }
+.login-card { width:min(470px,100%); }
+.back-link { display:inline-block; margin-bottom:58px; color:#707a72; font-size:13px; font-weight:600; }
+.login-card h2 { font-size:42px; margin:12px 0 8px; }
+.muted { color:var(--muted); line-height:1.6; }
+.login-card form { margin-top:30px; display:grid; gap:18px; }
+.login-card label { display:grid; gap:8px; font-size:13px; font-weight:700; color:#384139; }
+.login-card input { width:100%; border:1px solid #d8dfd7; border-radius:12px; padding:14px 15px; background:white; outline:none; color:var(--ink); }
+.login-card input:focus { border-color:#78907f; box-shadow:0 0 0 3px #edf2eb; }
+.form-error { background:var(--danger-soft); color:var(--danger); border:1px solid #efd1cc; padding:11px 12px; border-radius:10px; font-size:13px; }
+.login-button { width:100%; margin-top:4px; }
+.login-button:disabled { opacity:.65; cursor:progress; }
+.demo-divider { display:flex; align-items:center; gap:12px; color:#8a938b; font-size:11px; text-transform:uppercase; letter-spacing:.09em; margin:28px 0 14px; }
+.demo-divider:before,.demo-divider:after { content:''; height:1px; background:#e3e7e1; flex:1; }
+.demo-accounts { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+.demo-accounts button { text-align:left; border:1px solid #e0e5df; background:#fff; padding:11px 12px; border-radius:11px; cursor:pointer; color:#485249; }
+.demo-accounts button:hover { border-color:#9cad9f; background:#f7f9f5; }
+.demo-accounts b,.demo-accounts span { display:block; }
+.demo-accounts b { text-transform:capitalize; font-size:12px; color:#283229; }
+.demo-accounts span { font-size:10px; margin-top:3px; color:#7e8780; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.login-footnote { text-align:center; color:#89918b; font-size:11px; margin-top:18px; }
+.login-footnote code { background:#eef1ec; padding:2px 5px; border-radius:4px; }
+@media(max-width:820px){ .login-layout{grid-template-columns:1fr}.login-aside{display:none}.back-link{margin-bottom:36px} }
