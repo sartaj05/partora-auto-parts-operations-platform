@@ -6,21 +6,21 @@ export const demoAccounts = [
 ]
 
 export const modulesByRole = {
-  admin: ['dashboard', 'inventory', 'quotations', 'suppliers', 'stock'],
-  manager: ['dashboard', 'inventory', 'quotations', 'suppliers', 'stock'],
-  sales: ['dashboard', 'inventory', 'quotations'],
-  store: ['dashboard', 'inventory', 'stock'],
+  admin: ['dashboard', 'inventory', 'quotations', 'suppliers', 'stock', 'barcodes'],
+  manager: ['dashboard', 'inventory', 'quotations', 'suppliers', 'stock', 'barcodes'],
+  sales: ['dashboard', 'inventory', 'quotations', 'barcodes'],
+  store: ['dashboard', 'inventory', 'stock', 'barcodes'],
 }
 
 export const inventory = [
-  { id: 1, sku: 'BRK-1048', name: 'Ceramic Brake Pad Set', brand: 'RoadShield', category: 'auto', supplier: 'TorqueLine Components', price: 2450, stock_qty: 38, reorder_level: 12, stock_status: 'healthy', bin_location: 'A-04-12' },
-  { id: 2, sku: 'FLT-2210', name: 'Engine Oil Filter', brand: 'MotoPure', category: 'auto', supplier: 'TorqueLine Components', price: 420, stock_qty: 8, reorder_level: 15, stock_status: 'low', bin_location: 'A-02-03' },
-  { id: 3, sku: 'BLT-0812', name: 'Hex Bolt M8 × 20 mm', brand: 'ForgeFast', category: 'hardware', supplier: 'ForgeFast Hardware', price: 12, stock_qty: 640, reorder_level: 120, stock_status: 'healthy', bin_location: 'H-11-08' },
-  { id: 4, sku: 'BRG-6204', name: 'Deep Groove Bearing 6204', brand: 'AxisPro', category: 'hardware', supplier: 'ForgeFast Hardware', price: 310, stock_qty: 5, reorder_level: 18, stock_status: 'low', bin_location: 'H-03-14' },
-  { id: 5, sku: 'MCB-C32', name: '32A C-Curve MCB', brand: 'VoltEdge', category: 'electrical', supplier: 'VoltEdge Electricals', price: 690, stock_qty: 72, reorder_level: 20, stock_status: 'healthy', bin_location: 'E-08-02' },
-  { id: 6, sku: 'RLY-24V4', name: '24V 4-Pin Automotive Relay', brand: 'VoltEdge', category: 'electrical', supplier: 'VoltEdge Electricals', price: 180, stock_qty: 0, reorder_level: 16, stock_status: 'out', bin_location: 'E-05-09' },
-  { id: 7, sku: 'HLM-H7', name: 'H7 LED Headlamp Pair', brand: 'NightArc', category: 'auto', supplier: 'VoltEdge Electricals', price: 1650, stock_qty: 26, reorder_level: 10, stock_status: 'healthy', bin_location: 'A-09-01' },
-  { id: 8, sku: 'CBL-25R', name: '2.5 sq mm Copper Cable Roll', brand: 'VoltEdge', category: 'electrical', supplier: 'VoltEdge Electricals', price: 3250, stock_qty: 14, reorder_level: 8, stock_status: 'healthy', bin_location: 'E-12-04' },
+  { id: 1, sku: 'BRK-1048', name: 'Ceramic Brake Pad Set', brand: 'RoadShield', category: 'auto', supplier: 'TorqueLine Components', price: 2450, stock_qty: 38, reorder_level: 12, stock_status: 'healthy', bin_location: 'A-04-12', barcode: '890100010481' },
+  { id: 2, sku: 'FLT-2210', name: 'Engine Oil Filter', brand: 'MotoPure', category: 'auto', supplier: 'TorqueLine Components', price: 420, stock_qty: 8, reorder_level: 15, stock_status: 'low', bin_location: 'A-02-03', barcode: '890100022102' },
+  { id: 3, sku: 'BLT-0812', name: 'Hex Bolt M8 × 20 mm', brand: 'ForgeFast', category: 'hardware', supplier: 'ForgeFast Hardware', price: 12, stock_qty: 640, reorder_level: 120, stock_status: 'healthy', bin_location: 'H-11-08', barcode: '890100008123' },
+  { id: 4, sku: 'BRG-6204', name: 'Deep Groove Bearing 6204', brand: 'AxisPro', category: 'hardware', supplier: 'ForgeFast Hardware', price: 310, stock_qty: 5, reorder_level: 18, stock_status: 'low', bin_location: 'H-03-14', barcode: '890100062043' },
+  { id: 5, sku: 'MCB-C32', name: '32A C-Curve MCB', brand: 'VoltEdge', category: 'electrical', supplier: 'VoltEdge Electricals', price: 690, stock_qty: 72, reorder_level: 20, stock_status: 'healthy', bin_location: 'E-08-02', barcode: '890100032003' },
+  { id: 6, sku: 'RLY-24V4', name: '24V 4-Pin Automotive Relay', brand: 'VoltEdge', category: 'electrical', supplier: 'VoltEdge Electricals', price: 180, stock_qty: 0, reorder_level: 16, stock_status: 'out', bin_location: 'E-05-09', barcode: '890100024004' },
+  { id: 7, sku: 'HLM-H7', name: 'H7 LED Headlamp Pair', brand: 'NightArc', category: 'auto', supplier: 'VoltEdge Electricals', price: 1650, stock_qty: 26, reorder_level: 10, stock_status: 'healthy', bin_location: 'A-09-01', barcode: '890100000707' },
+  { id: 8, sku: 'CBL-25R', name: '2.5 sq mm Copper Cable Roll', brand: 'VoltEdge', category: 'electrical', supplier: 'VoltEdge Electricals', price: 3250, stock_qty: 14, reorder_level: 8, stock_status: 'healthy', bin_location: 'E-12-04', barcode: '890100025007' },
 ]
 
 export const quotations = [

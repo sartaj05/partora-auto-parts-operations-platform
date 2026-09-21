@@ -86,3 +86,8 @@ class StockMovement(models.Model):
 
     def __str__(self):
         return f"{self.product.sku}: {self.movement_type} {self.quantity}"
+
+# Feature 01: Barcode / QR inventory scanning
+# Stored as a standard text code so the frontend can work with USB scanners,
+# phone camera integrations, QR values, EAN/UPC codes, or internal labels.
+Product.add_to_class("barcode", models.CharField(max_length=64, unique=True, blank=True, null=True))

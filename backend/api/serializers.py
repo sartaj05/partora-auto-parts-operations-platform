@@ -24,6 +24,7 @@ def product_dict(p):
         "reorder_level": p.reorder_level,
         "stock_status": p.stock_status,
         "bin_location": p.bin_location,
+        "barcode": p.barcode,
     }
 
 
