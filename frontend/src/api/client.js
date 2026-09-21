@@ -1,4 +1,4 @@
-import { demoAccounts, fitments, inventory, mockDashboard, modulesByRole, purchaseOrders, quotations, stock, suppliers, warehouseState } from '../mock/data'
+import { demoAccounts, fitments, inventory, mockDashboard, modulesByRole, purchaseOrders, quotations, reorderSuggestions, stock, suppliers, warehouseState } from '../mock/data'
 
 const API_BASE = (import.meta.env.VITE_API_URL || '/api').replace(/\/$/, '')
 const NETWORK_MESSAGE = 'Backend unavailable. Demo mode is active.'
@@ -53,6 +53,7 @@ const fallback = {
   '/fitments/': () => ({ items: fitments, count: fitments.length }),
   '/purchase-orders/': () => ({ items: purchaseOrders, count: purchaseOrders.length }),
   '/warehouses/': () => warehouseState,
+  '/reorder/': () => ({ items: reorderSuggestions(), count: reorderSuggestions().length }),
 }
 
 export async function loadEndpoint(path, role) {
@@ -70,6 +71,10 @@ export async function loadEndpoint(path, role) {
 
 function createMock(path, payload, role) {
   const id = Date.now()
+  if (path === '/reorder/') {
+    const product=inventory.find(x=>x.sku===String(payload.sku||'').toUpperCase());if(!product)throw new Error('SKU not found')
+    const item={id:Date.now(),po_no:`PO-REORDER-${String(Date.now()).slice(-4)}`,sku:product.sku,supplier:product.supplier,quantity:Number(payload.quantity||product.reorder_qty||25),status:'approved'};purchaseOrders.unshift({...item,expected_date:null,total:item.quantity*product.price,line_count:1,received_lines:0,created_by:'Demo User'});return {item}
+  }
   if (path === '/warehouses/') {
     if(payload.action==='warehouse'){const item={id:Date.now(),code:String(payload.code||'').toUpperCase(),name:payload.name,address:payload.address||'',sku_count:0,units:0};warehouseState.warehouses.push(item);return {item}}
     const item={id:Date.now(),reference:`TR-DEMO-${String(Date.now()).slice(-4)}`,from_warehouse:String(payload.from_warehouse||'').toUpperCase(),to_warehouse:String(payload.to_warehouse||'').toUpperCase(),sku:String(payload.sku||'').toUpperCase(),product:inventory.find(x=>x.sku===String(payload.sku||'').toUpperCase())?.name||'Demo part',quantity:Number(payload.quantity||1),status:'completed',created_at:new Date().toISOString()};warehouseState.transfers.unshift(item);return {item}

@@ -22,6 +22,7 @@ def product_dict(p):
         "price": float(p.price),
         "stock_qty": p.stock_qty,
         "reorder_level": p.reorder_level,
+        "reorder_qty": p.reorder_qty,
         "stock_status": p.stock_status,
         "bin_location": p.bin_location,
         "barcode": p.barcode,
