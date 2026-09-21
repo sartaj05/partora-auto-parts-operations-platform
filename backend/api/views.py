@@ -1,6 +1,6 @@
 import json
 from django.contrib.auth import authenticate
-from django.db.models import Q, Sum
+from django.db.models import DecimalField, ExpressionWrapper, F, Q, Sum
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from .auth import api_login_required, issue_token, roles_allowed
@@ -49,7 +49,8 @@ def me_view(request):
 @api_login_required
 def dashboard_view(request):
     role = request.api_user.profile.role
-    total_inventory_value = Product.objects.aggregate(total=Sum("price"))["total"] or 0
+    inventory_value = ExpressionWrapper(F("price") * F("stock_qty"), output_field=DecimalField(max_digits=16, decimal_places=2))
+    total_inventory_value = Product.objects.aggregate(total=Sum(inventory_value))["total"] or 0
     data = {
         "role": role,
         "metrics": {

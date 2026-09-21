@@ -1,7 +1,7 @@
 from datetime import date, timedelta
 from django.contrib.auth.models import User
 from django.core.management.base import BaseCommand
-from api.models import Product, Quotation, StockMovement, Supplier
+from api.models import Product, Profile, Quotation, StockMovement, Supplier
 
 USERS = [
     ("admin@partora.demo", "Aarav Admin", "admin"),
@@ -23,8 +23,9 @@ class Command(BaseCommand):
             user.last_name = last
             user.set_password("demo123")
             user.save()
-            user.profile.role = role
-            user.profile.save()
+            profile, _ = Profile.objects.get_or_create(user=user)
+            profile.role = role
+            profile.save()
             users[role] = user
 
         suppliers = []
