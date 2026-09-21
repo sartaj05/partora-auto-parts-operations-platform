@@ -63,3 +63,59 @@ export async function loadEndpoint(path, role) {
     return { data, demoMode: true }
   }
 }
+
+function createMock(path, payload, role) {
+  const id = Date.now()
+  if (path === '/inventory/') {
+    const stockQty = Number(payload.stock_qty || 0)
+    const reorder = Number(payload.reorder_level || 10)
+    const item = {
+      id, sku: String(payload.sku || '').toUpperCase(), name: payload.name, brand: payload.brand,
+      category: payload.category, supplier: payload.supplier || 'Unassigned', price: Number(payload.price || 0),
+      stock_qty: stockQty, reorder_level: reorder, stock_status: stockQty <= 0 ? 'out' : stockQty <= reorder ? 'low' : 'healthy',
+      bin_location: payload.bin_location || '—',
+    }
+    inventory.unshift(item); return { item }
+  }
+  if (path === '/quotations/') {
+    const account = demoAccounts.find(a => a.role === role)
+    const item = {
+      id, quote_no: `QT-DEMO-${String(id).slice(-5)}`, customer_name: payload.customer_name,
+      customer_company: payload.customer_company || '', total: Number(payload.total || 0), status: payload.status || 'draft',
+      valid_until: payload.valid_until, created_by: account?.name || 'Demo User',
+    }
+    quotations.unshift(item); return { item }
+  }
+  if (path === '/suppliers/') {
+    const item = {
+      id, name: payload.name, contact_name: payload.contact_name || '', phone: payload.phone || '', email: payload.email || '',
+      lead_time_days: Number(payload.lead_time_days || 3), rating: Number(payload.rating || 4), active: true,
+    }
+    suppliers.unshift(item); return { item }
+  }
+  if (path === '/stock/') {
+    const product = inventory.find(x => x.sku.toUpperCase() === String(payload.sku || '').toUpperCase())
+    if (!product) throw new Error('SKU not found in demo inventory')
+    const qty = Math.abs(Number(payload.quantity || 0))
+    if (!qty) throw new Error('Quantity must be greater than zero')
+    if (payload.type === 'out') product.stock_qty = Math.max(0, product.stock_qty - qty)
+    else if (payload.type === 'adjustment') product.stock_qty = qty
+    else product.stock_qty += qty
+    product.stock_status = product.stock_qty <= 0 ? 'out' : product.stock_qty <= product.reorder_level ? 'low' : 'healthy'
+    const item = { id, sku: product.sku, product: product.name, type: payload.type || 'in', quantity: qty, reference: payload.reference || 'DEMO', created_at: new Date().toISOString() }
+    stock.unshift(item); return { item }
+  }
+  throw new Error('Unsupported demo action')
+}
+
+export async function createEndpoint(path, payload, role) {
+  try {
+    const result = await request(path, { method: 'POST', body: JSON.stringify(payload) })
+    if (!result?.item) throw new Error('API is not connected')
+    return { ...result, demoMode: false }
+  } catch (error) {
+    if (error.status && error.status !== 404 && error.status < 500) throw error
+    await sleep(140)
+    return { ...createMock(path, payload, role), demoMode: true }
+  }
+}
