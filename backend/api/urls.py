@@ -17,4 +17,5 @@ urlpatterns = [
     path("warehouses/", views.warehouses_view),
     path("reorder/", views.reorder_view),
     path("sales-flow/", views.sales_flow_view),
+    path("customers/", views.customers_view),
 ]
