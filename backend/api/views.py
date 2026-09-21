@@ -7,14 +7,14 @@ from django.http import JsonResponse
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 from .auth import api_login_required, issue_token, roles_allowed
-from .models import Product, Quotation, StockMovement, Supplier, VehicleFitment
+from .models import Product, Quotation, StockMovement, Supplier, VehicleFitment, PurchaseOrder, PurchaseOrderItem
 from .serializers import product_dict, quotation_dict, supplier_dict
 
 ROLE_MODULES = {
-    "admin": ["dashboard", "inventory", "quotations", "suppliers", "stock", "barcodes", "fitments"],
-    "manager": ["dashboard", "inventory", "quotations", "suppliers", "stock", "barcodes", "fitments"],
+    "admin": ["dashboard", "inventory", "quotations", "suppliers", "stock", "barcodes", "fitments", "purchase_orders"],
+    "manager": ["dashboard", "inventory", "quotations", "suppliers", "stock", "barcodes", "fitments", "purchase_orders"],
     "sales": ["dashboard", "inventory", "quotations", "barcodes", "fitments"],
-    "store": ["dashboard", "inventory", "stock", "barcodes", "fitments"],
+    "store": ["dashboard", "inventory", "stock", "barcodes", "fitments", "purchase_orders"],
 }
 
 def parse_body(request):
@@ -235,3 +235,40 @@ def fitments_view(request):
             return JsonResponse({"detail": f"Could not add fitment: {exc}"}, status=400)
         return JsonResponse({"item": {"id": fitment.id, "sku": product.sku, "product": product.name, "make": fitment.make, "model": fitment.model, "year_from": fitment.year_from, "year_to": fitment.year_to, "variant": fitment.variant, "engine": fitment.engine, "oem_number": fitment.oem_number}}, status=201)
     return JsonResponse({"detail": "Method not allowed"}, status=405)
+
+@csrf_exempt
+@roles_allowed("admin", "manager", "store")
+def purchase_orders_view(request):
+    if request.method == "GET":
+        qs = PurchaseOrder.objects.select_related("supplier", "created_by").prefetch_related("items__product").order_by("-created_at")
+        items=[]
+        for po in qs[:100]:
+            items.append({"id":po.id,"po_no":po.po_no,"supplier":po.supplier.name,"status":po.status,"expected_date":po.expected_date.isoformat() if po.expected_date else None,"total":float(po.total),"created_by":(po.created_by.get_full_name() or po.created_by.username) if po.created_by else "System","line_count":po.items.count(),"received_lines":sum(1 for i in po.items.all() if i.received_qty >= i.quantity)})
+        return JsonResponse({"items":items,"count":qs.count()})
+    if request.method == "POST":
+        data=parse_body(request) or {}
+        action=str(data.get("action","create"))
+        if action == "receive":
+            try:
+                po=PurchaseOrder.objects.prefetch_related("items__product").get(id=int(data["id"]))
+                for line in po.items.all():
+                    remaining=max(0,line.quantity-line.received_qty)
+                    if remaining:
+                        line.received_qty += remaining; line.save(update_fields=["received_qty"])
+                        line.product.stock_qty += remaining; line.product.save(update_fields=["stock_qty","updated_at"])
+                        StockMovement.objects.create(product=line.product,movement_type="in",quantity=remaining,reference=po.po_no)
+                po.status="received"; po.save(update_fields=["status"])
+            except Exception as exc:
+                return JsonResponse({"detail":f"Could not receive purchase order: {exc}"},status=400)
+            return JsonResponse({"item":{"id":po.id,"po_no":po.po_no,"supplier":po.supplier.name,"status":po.status,"expected_date":po.expected_date.isoformat() if po.expected_date else None,"total":float(po.total),"line_count":po.items.count(),"received_lines":po.items.count()}})
+        try:
+            supplier=Supplier.objects.get(name=str(data.get("supplier","")).strip())
+            expected=date.fromisoformat(str(data["expected_date"])) if data.get("expected_date") else None
+            product=Product.objects.get(sku=str(data.get("sku","")).strip().upper())
+            qty=max(1,int(data.get("quantity",1))); unit_cost=float(data.get("unit_cost") or product.price)
+            po=PurchaseOrder.objects.create(po_no=f"PO-{timezone.now():%y%m%d}-{uuid4().hex[:4].upper()}",supplier=supplier,status=str(data.get("status","draft")),expected_date=expected,total=qty*unit_cost,created_by=request.api_user)
+            PurchaseOrderItem.objects.create(purchase_order=po,product=product,quantity=qty,unit_cost=unit_cost)
+        except Exception as exc:
+            return JsonResponse({"detail":f"Could not create purchase order: {exc}"},status=400)
+        return JsonResponse({"item":{"id":po.id,"po_no":po.po_no,"supplier":po.supplier.name,"status":po.status,"expected_date":po.expected_date.isoformat() if po.expected_date else None,"total":float(po.total),"created_by":request.api_user.get_full_name() or request.api_user.username,"line_count":1,"received_lines":0}},status=201)
+    return JsonResponse({"detail":"Method not allowed"},status=405)

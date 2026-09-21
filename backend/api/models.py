@@ -104,3 +104,20 @@ class VehicleFitment(models.Model):
 
     def __str__(self):
         return f"{self.make} {self.model} {self.year_from}-{self.year_to} / {self.product.sku}"
+
+class PurchaseOrder(models.Model):
+    STATUS_CHOICES = [("draft","Draft"),("approved","Approved"),("ordered","Ordered"),("partial","Partially received"),("received","Received")]
+    po_no = models.CharField(max_length=30, unique=True)
+    supplier = models.ForeignKey(Supplier, on_delete=models.PROTECT, related_name="purchase_orders")
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="draft")
+    expected_date = models.DateField(null=True, blank=True)
+    total = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name="purchase_orders")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+class PurchaseOrderItem(models.Model):
+    purchase_order = models.ForeignKey(PurchaseOrder, on_delete=models.CASCADE, related_name="items")
+    product = models.ForeignKey(Product, on_delete=models.PROTECT, related_name="purchase_order_items")
+    quantity = models.PositiveIntegerField()
+    unit_cost = models.DecimalField(max_digits=12, decimal_places=2)
+    received_qty = models.PositiveIntegerField(default=0)

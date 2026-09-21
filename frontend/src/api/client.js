@@ -1,4 +1,4 @@
-import { demoAccounts, fitments, inventory, mockDashboard, modulesByRole, quotations, stock, suppliers } from '../mock/data'
+import { demoAccounts, fitments, inventory, mockDashboard, modulesByRole, purchaseOrders, quotations, stock, suppliers } from '../mock/data'
 
 const API_BASE = (import.meta.env.VITE_API_URL || '/api').replace(/\/$/, '')
 const NETWORK_MESSAGE = 'Backend unavailable. Demo mode is active.'
@@ -51,6 +51,7 @@ const fallback = {
   '/stock/': () => ({ items: stock }),
   '/barcodes/': () => ({ items: inventory.filter(x => x.barcode) }),
   '/fitments/': () => ({ items: fitments, count: fitments.length }),
+  '/purchase-orders/': () => ({ items: purchaseOrders, count: purchaseOrders.length }),
 }
 
 export async function loadEndpoint(path, role) {
@@ -68,6 +69,11 @@ export async function loadEndpoint(path, role) {
 
 function createMock(path, payload, role) {
   const id = Date.now()
+  if (path === '/purchase-orders/') {
+    if(payload.action==='receive'){const po=purchaseOrders.find(x=>x.id===Number(payload.id));if(!po)throw new Error('PO not found');po.status='received';po.received_lines=po.line_count;return {item:po}}
+    const product=inventory.find(x=>x.sku.toUpperCase()===String(payload.sku||'').toUpperCase());if(!product)throw new Error('SKU not found')
+    const item={id:Date.now(),po_no:`PO-DEMO-${String(Date.now()).slice(-4)}`,supplier:payload.supplier,status:payload.status||'draft',expected_date:payload.expected_date||null,total:Number(payload.quantity||1)*Number(payload.unit_cost||product.price),created_by:'Demo User',line_count:1,received_lines:0};purchaseOrders.unshift(item);return {item}
+  }
   if (path === '/fitments/') {
     const product = inventory.find(x => x.sku.toUpperCase() === String(payload.sku || '').toUpperCase())
     if (!product) throw new Error('SKU not found in demo inventory')

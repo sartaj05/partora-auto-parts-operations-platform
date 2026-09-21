@@ -8,3 +8,6 @@ admin.site.register(Quotation)
 admin.site.register(StockMovement)
 from .models import VehicleFitment
 admin.site.register(VehicleFitment)
+from .models import PurchaseOrder, PurchaseOrderItem
+admin.site.register(PurchaseOrder)
+admin.site.register(PurchaseOrderItem)
