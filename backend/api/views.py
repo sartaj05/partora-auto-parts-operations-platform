@@ -7,13 +7,13 @@ from django.http import JsonResponse
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 from .auth import api_login_required, issue_token, roles_allowed
-from .models import Product, Quotation, StockMovement, Supplier, VehicleFitment, PurchaseOrder, PurchaseOrderItem, Warehouse, WarehouseStock, StockTransfer, SalesOrder, Invoice, Customer
+from .models import Product, Quotation, StockMovement, Supplier, VehicleFitment, PurchaseOrder, PurchaseOrderItem, Warehouse, WarehouseStock, StockTransfer, SalesOrder, Invoice, Customer, PriceRule
 from .serializers import product_dict, quotation_dict, supplier_dict
 
 ROLE_MODULES = {
-    "admin": ["dashboard", "inventory", "quotations", "suppliers", "stock", "barcodes", "fitments", "purchase_orders", "warehouses", "reorder", "sales_flow", "crm"],
-    "manager": ["dashboard", "inventory", "quotations", "suppliers", "stock", "barcodes", "fitments", "purchase_orders", "warehouses", "reorder", "sales_flow", "crm"],
-    "sales": ["dashboard", "inventory", "quotations", "barcodes", "fitments", "sales_flow", "crm"],
+    "admin": ["dashboard", "inventory", "quotations", "suppliers", "stock", "barcodes", "fitments", "purchase_orders", "warehouses", "reorder", "sales_flow", "crm", "pricing"],
+    "manager": ["dashboard", "inventory", "quotations", "suppliers", "stock", "barcodes", "fitments", "purchase_orders", "warehouses", "reorder", "sales_flow", "crm", "pricing"],
+    "sales": ["dashboard", "inventory", "quotations", "barcodes", "fitments", "sales_flow", "crm", "pricing"],
     "store": ["dashboard", "inventory", "stock", "barcodes", "fitments", "purchase_orders", "warehouses", "reorder"],
 }
 
@@ -363,4 +363,30 @@ def customers_view(request):
         except Exception as exc:
             return JsonResponse({"detail":f"Could not add customer: {exc}"},status=400)
         return JsonResponse({"item":{"id":c.id,"name":c.name,"company":c.company,"email":c.email,"phone":c.phone,"customer_type":c.customer_type,"credit_limit":float(c.credit_limit),"payment_terms_days":c.payment_terms_days,"outstanding_balance":float(c.outstanding_balance),"notes":c.notes}},status=201)
+    return JsonResponse({"detail":"Method not allowed"},status=405)
+
+@csrf_exempt
+@roles_allowed("admin", "manager", "sales")
+def pricing_view(request):
+    if request.method == "GET":
+        rules=[{"id":r.id,"name":r.name,"customer_type":r.customer_type,"min_qty":r.min_qty,"discount_percent":float(r.discount_percent),"active":r.active} for r in PriceRule.objects.filter(active=True).order_by("customer_type","min_qty")]
+        return JsonResponse({"items":rules})
+    if request.method == "POST":
+        data=parse_body(request) or {}; action=str(data.get("action","rule"))
+        if action == "preview":
+            try:
+                product=Product.objects.get(sku=str(data["sku"]).strip().upper()); customer_type=str(data.get("customer_type","retail")); qty=max(1,int(data.get("quantity",1)))
+                if customer_type == "dealer" and product.dealer_price > 0: base=float(product.dealer_price)
+                elif customer_type in {"fleet","workshop"} and product.wholesale_price > 0: base=float(product.wholesale_price)
+                else: base=float(product.price)
+                rule=PriceRule.objects.filter(active=True,customer_type=customer_type,min_qty__lte=qty).order_by("-min_qty","-discount_percent").first(); discount=float(rule.discount_percent) if rule else 0
+                unit=round(base*(1-discount/100),2); margin=round(((unit-float(product.cost_price))/unit*100),1) if unit and product.cost_price else None
+            except Exception as exc:
+                return JsonResponse({"detail":f"Could not calculate price: {exc}"},status=400)
+            return JsonResponse({"item":{"sku":product.sku,"name":product.name,"customer_type":customer_type,"quantity":qty,"base_price":base,"discount_percent":discount,"unit_price":unit,"line_total":round(unit*qty,2),"margin_percent":margin,"rule":rule.name if rule else None}})
+        try:
+            rule=PriceRule.objects.create(name=str(data["name"]).strip(),customer_type=str(data.get("customer_type","dealer")),min_qty=max(1,int(data.get("min_qty",1))),discount_percent=float(data.get("discount_percent",0)))
+        except Exception as exc:
+            return JsonResponse({"detail":f"Could not create price rule: {exc}"},status=400)
+        return JsonResponse({"item":{"id":rule.id,"name":rule.name,"customer_type":rule.customer_type,"min_qty":rule.min_qty,"discount_percent":float(rule.discount_percent),"active":rule.active}},status=201)
     return JsonResponse({"detail":"Method not allowed"},status=405)
