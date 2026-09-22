@@ -113,6 +113,7 @@ class PurchaseOrder(models.Model):
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="draft")
     expected_date = models.DateField(null=True, blank=True)
     total = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    received_at = models.DateTimeField(null=True, blank=True)
     created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name="purchase_orders")
     created_at = models.DateTimeField(auto_now_add=True)
 
@@ -196,6 +197,59 @@ class Payment(models.Model):
     paid_at = models.DateTimeField(default=timezone.now)
     created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name="partora_payments")
 
+class ReturnRequest(models.Model):
+    STATUS_CHOICES = [("requested", "Requested"), ("approved", "Approved"), ("received", "Received"), ("inspected", "Inspected"), ("resolved", "Resolved"), ("rejected", "Rejected")]
+    RESOLUTION_CHOICES = [("refund", "Refund"), ("replacement", "Replacement"), ("credit", "Account credit"), ("restock", "Restock")]
+    return_no = models.CharField(max_length=30, unique=True)
+    sales_order = models.ForeignKey(SalesOrder, on_delete=models.SET_NULL, null=True, blank=True, related_name="returns")
+    product = models.ForeignKey(Product, on_delete=models.PROTECT, related_name="return_requests")
+    customer_name = models.CharField(max_length=140)
+    quantity = models.PositiveIntegerField(default=1)
+    reason = models.CharField(max_length=240)
+    warranty_expires = models.DateField(null=True, blank=True)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="requested")
+    resolution = models.CharField(max_length=20, choices=RESOLUTION_CHOICES, blank=True)
+    inspection_notes = models.CharField(max_length=300, blank=True)
+    refund_amount = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    stock_restocked = models.BooleanField(default=False)
+    created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name="return_requests")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+class InventoryCount(models.Model):
+    STATUS_CHOICES = [("draft", "Draft"), ("submitted", "Submitted"), ("approved", "Approved")]
+    reference = models.CharField(max_length=30, unique=True)
+    warehouse = models.ForeignKey(Warehouse, on_delete=models.SET_NULL, null=True, blank=True, related_name="inventory_counts")
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="draft")
+    notes = models.CharField(max_length=300, blank=True)
+    counted_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name="inventory_counts")
+    approved_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name="inventory_count_approvals")
+    created_at = models.DateTimeField(auto_now_add=True)
+    approved_at = models.DateTimeField(null=True, blank=True)
+
+class InventoryCountLine(models.Model):
+    inventory_count = models.ForeignKey(InventoryCount, on_delete=models.CASCADE, related_name="lines")
+    product = models.ForeignKey(Product, on_delete=models.PROTECT, related_name="inventory_count_lines")
+    expected_qty = models.IntegerField()
+    counted_qty = models.IntegerField()
+    variance = models.IntegerField(default=0)
+
+class ProductLot(models.Model):
+    product = models.ForeignKey(Product, on_delete=models.PROTECT, related_name="lots")
+    warehouse = models.ForeignKey(Warehouse, on_delete=models.SET_NULL, null=True, blank=True, related_name="product_lots")
+    lot_no = models.CharField(max_length=80)
+    serial_no = models.CharField(max_length=100, blank=True)
+    quantity = models.PositiveIntegerField(default=1)
+    expiry_date = models.DateField(null=True, blank=True)
+    received_at = models.DateField(default=timezone.localdate)
+
+class SupplierPriceSnapshot(models.Model):
+    supplier = models.ForeignKey(Supplier, on_delete=models.PROTECT, related_name="price_snapshots")
+    product = models.ForeignKey(Product, on_delete=models.PROTECT, related_name="supplier_price_snapshots")
+    unit_cost = models.DecimalField(max_digits=12, decimal_places=2)
+    source_po = models.ForeignKey(PurchaseOrder, on_delete=models.SET_NULL, null=True, blank=True, related_name="price_snapshots")
+    captured_at = models.DateTimeField(auto_now_add=True)
+
 class Customer(models.Model):
     TYPE_CHOICES = [("retail","Retail"),("dealer","Dealer"),("fleet","Fleet"),("workshop","Workshop")]
     name = models.CharField(max_length=140)
@@ -212,6 +266,14 @@ class Customer(models.Model):
 
     def __str__(self):
         return self.company or self.name
+
+class CustomerPortalToken(models.Model):
+    token = models.CharField(max_length=80, unique=True)
+    customer = models.ForeignKey(Customer, on_delete=models.CASCADE, related_name="portal_tokens")
+    expires_at = models.DateTimeField()
+    active = models.BooleanField(default=True)
+    created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name="issued_portal_tokens")
+    created_at = models.DateTimeField(auto_now_add=True)
 
 # Feature 08: tier pricing and discount rules.
 Product.add_to_class("cost_price", models.DecimalField(max_digits=12, decimal_places=2, default=0))

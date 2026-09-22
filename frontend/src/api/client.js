@@ -1,4 +1,4 @@
-import { analyticsData, customers, demoAccounts, fitments, fulfillmentState, governanceState, inventory, mockDashboard, modulesByRole, priceRules, purchaseOrders, quotations, reorderSuggestions, salesFlow, stock, suppliers, warehouseState } from '../mock/data'
+import { analyticsData, customers, demoAccounts, fitments, fulfillmentState, governanceState, inventory, inventoryControlState, mockDashboard, modulesByRole, portalState, priceRules, purchaseOrders, quotations, reorderSuggestions, returnsState, salesFlow, stock, supplierPerformanceState, suppliers, warehouseState } from '../mock/data'
 
 const API_BASE = (import.meta.env.VITE_API_URL || '/api').replace(/\/$/, '')
 const NETWORK_MESSAGE = 'Backend unavailable. Demo mode is active.'
@@ -56,6 +56,9 @@ const fallback = {
   '/reorder/': () => ({ items: reorderSuggestions(), count: reorderSuggestions().length }),
   '/sales-flow/': () => salesFlow,
   '/fulfillment/': () => fulfillmentState,
+  '/returns/': () => returnsState,
+  '/inventory-control/': () => inventoryControlState,
+  '/supplier-performance/': () => supplierPerformanceState,
   '/customers/': () => ({ items: customers, count: customers.length }),
   '/pricing/': () => ({ items: priceRules }),
   '/analytics/': () => analyticsData(),
@@ -73,6 +76,21 @@ export async function loadEndpoint(path, role) {
     if (!data) throw error
     return { data, demoMode: true }
   }
+}
+
+function demoPortal(token){
+  if(!portalState.tokens[token]){const customer=customers[0];portalState.tokens[token]={token,customer:{id:customer.id,name:customer.name,company:customer.company,email:customer.email},quotes:quotations.filter(q=>q.customer_company===customer.company).map(q=>({...q})),orders:salesFlow.orders.filter(o=>o.customer_company===customer.company).map(o=>({...o,fulfillment_status:o.status})),invoices:fulfillmentState.invoices.filter(i=>i.customer===customer.company).map(i=>({...i}))}}
+  return portalState.tokens[token]
+}
+
+export async function loadPortal(token) {
+  try { return { data: await request(`/portal/?token=${encodeURIComponent(token)}`), demoMode:false } }
+  catch (error) { if(error.status && error.status < 500) throw error; await sleep(120); return { data:demoPortal(token), demoMode:true } }
+}
+
+export async function portalAction(token, payload) {
+  try { return { ...(await request('/portal/', {method:'POST',body:JSON.stringify({token,...payload})})), demoMode:false } }
+  catch (error) { if(error.status && error.status < 500) throw error; await sleep(120); const data=demoPortal(token); if(payload.action==='approve_quote'){const q=data.quotes.find(x=>x.id===Number(payload.quote_id));if(q)q.status='approved'} if(payload.action==='repeat_order'){const o=data.orders.find(x=>x.id===Number(payload.order_id));if(o)data.quotes.unshift({id:Date.now(),quote_no:`QT-DEMO-${String(Date.now()).slice(-4)}`,total:o.total,status:'draft',valid_until:new Date(Date.now()+7*86400000).toISOString().slice(0,10)})} return { ...data, demoMode:true } }
 }
 
 function createMock(path, payload, role) {
@@ -101,6 +119,21 @@ function createMock(path, payload, role) {
       let invoice=fulfillmentState.invoices.find(x=>x.order_no===order.order_no); if(!invoice){invoice={id:Date.now(),invoice_no:`INV-DEMO-${String(Date.now()).slice(-4)}`,order_no:order.order_no,customer:order.customer_company||order.customer_name,total:order.total,paid:0,balance:order.total,status:'issued',due_date:new Date(Date.now()+30*86400000).toISOString().slice(0,10)};fulfillmentState.invoices.unshift(invoice);order.invoice_no=invoice.invoice_no}
       invoice.paid+=Number(payload.amount||0);invoice.balance=Math.max(0,invoice.total-invoice.paid);invoice.status=invoice.balance===0?'paid':'partial';return {item:order,invoice}
     }
+  }
+  if (path === '/returns/') {
+    if(payload.action==='create'){const product=inventory.find(x=>x.sku===String(payload.sku||'').toUpperCase());if(!product)throw new Error('SKU not found');const item={id:Date.now(),return_no:`RMA-DEMO-${String(Date.now()).slice(-4)}`,order_no:payload.order_no||null,sku:product.sku,product:product.name,customer_name:payload.customer_name||'Walk-in customer',quantity:Number(payload.quantity||1),reason:payload.reason,warranty_expires:payload.warranty_expires||null,status:'requested',resolution:'',inspection_notes:'',refund_amount:Number(payload.refund_amount||0),stock_restocked:false,created_at:new Date().toISOString()};returnsState.items.unshift(item);return {item}}
+    const item=returnsState.items.find(x=>x.id===Number(payload.id));if(!item)throw new Error('Return not found');item.status=payload.status||item.status;item.resolution=payload.resolution||item.resolution;item.inspection_notes=payload.inspection_notes||item.inspection_notes;item.stock_restocked=item.status==='resolved'&&item.resolution==='restock';return {item}
+  }
+  if (path === '/inventory-control/') {
+    if(payload.action==='count'){const product=inventory.find(x=>x.sku===String(payload.sku||'').toUpperCase());if(!product)throw new Error('SKU not found');const expected=Number(payload.expected_qty??product.stock_qty);const counted=Number(payload.counted_qty||0);const item={id:Date.now(),reference:`CNT-DEMO-${String(Date.now()).slice(-4)}`,warehouse:payload.warehouse||null,status:'submitted',notes:payload.notes||'',counted_by:'Demo User',created_at:new Date().toISOString(),lines:[{sku:product.sku,product:product.name,expected_qty:expected,counted_qty:counted,variance:counted-expected}]};inventoryControlState.counts.unshift(item);return {item}}
+    if(payload.action==='approve'){const item=inventoryControlState.counts.find(x=>x.id===Number(payload.id));if(!item)throw new Error('Count not found');item.status='approved';item.lines.forEach(line=>{const product=inventory.find(x=>x.sku===line.sku);if(product){product.stock_qty=line.counted_qty;product.stock_status=product.stock_qty<=product.reorder_level?'low':'healthy'}});return {item}}
+    if(payload.action==='lot'){const product=inventory.find(x=>x.sku===String(payload.sku||'').toUpperCase());if(!product)throw new Error('SKU not found');const item={id:Date.now(),sku:product.sku,product:product.name,lot_no:payload.lot_no,serial_no:payload.serial_no||'',quantity:Number(payload.quantity||1),warehouse:payload.warehouse||null,expiry_date:payload.expiry_date||null};inventoryControlState.lots.unshift(item);return {item}}
+  }
+  if (path === '/supplier-performance/') {
+    const product=inventory.find(x=>x.sku===String(payload.sku||'').toUpperCase());const supplier=suppliers.find(x=>x.name===payload.supplier);if(!product||!supplier)throw new Error('Supplier or SKU not found');const item={id:Date.now(),supplier:supplier.name,sku:product.sku,product:product.name,unit_cost:Number(payload.unit_cost||product.cost_price||product.price),captured_at:new Date().toISOString()};supplierPerformanceState.prices.unshift(item);return {item}
+  }
+  if (path === '/portal/issue/') {
+    const customer=customers.find(x=>x.id===Number(payload.customer_id));if(!customer)throw new Error('Customer not found');const token=`demo-${customer.id}-${Date.now()}`;const data={token,customer:{id:customer.id,name:customer.name,company:customer.company,email:customer.email},quotes:quotations.filter(q=>q.customer_company===customer.company).map(q=>({...q})),orders:salesFlow.orders.filter(o=>o.customer_company===customer.company).map(o=>({...o,fulfillment_status:o.status})),invoices:[]};portalState.tokens[token]=data;return {item:{token,customer:customer.company||customer.name,expires_at:new Date(Date.now()+30*86400000).toISOString(),portal_path:`/portal/${token}`},portal:data}
   }
   if (path === '/reorder/') {
     const product=inventory.find(x=>x.sku===String(payload.sku||'').toUpperCase());if(!product)throw new Error('SKU not found')

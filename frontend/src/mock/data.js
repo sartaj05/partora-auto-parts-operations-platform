@@ -98,6 +98,24 @@ export const fulfillmentState = {
   invoices: [],
 }
 
+export const returnsState = {
+  items: [{ id:1, return_no:'RMA-260921-7A2C', order_no:'SO-260921-41BC', sku:'BRK-1048', product:'Ceramic Brake Pad Set', customer_name:'Northline Repairs', quantity:1, reason:'Fitment issue reported after installation', warranty_expires:'2027-09-21', status:'requested', resolution:'', inspection_notes:'', refund_amount:0, stock_restocked:false, created_at:'2026-09-21T12:05:00+05:30' }],
+}
+
+export const inventoryControlState = {
+  availability: inventory.map(x => ({ id:x.id, sku:x.sku, product:x.name, stock_qty:x.stock_qty, reserved_qty:0, available_qty:x.stock_qty, status:x.stock_status })),
+  counts: [{ id:1, reference:'CNT-260921-9B20', warehouse:'DEL-MAIN', status:'submitted', notes:'End-of-day brake aisle count', counted_by:'Kabir Store', created_at:'2026-09-21T17:20:00+05:30', lines:[{sku:'BRK-1048',product:'Ceramic Brake Pad Set',expected_qty:38,counted_qty:37,variance:-1}] }],
+  lots: [{ id:1, sku:'BRK-1048', product:'Ceramic Brake Pad Set', lot_no:'RS-2026-08', serial_no:'', quantity:20, warehouse:'DEL-MAIN', expiry_date:null }],
+}
+
+export const supplierPerformanceState = {
+  suppliers: suppliers.map(s => ({ id:s.id, name:s.name, lead_time_days:s.lead_time_days, rating:s.rating, po_count:2, received_count:1, on_time_rate:100, fill_rate:92, latest_cost:null })),
+  plans: reorderSuggestions().map(x => ({ sku:x.sku, product:x.name, supplier:x.supplier, stock_qty:x.stock_qty, reorder_level:x.reorder_level, suggested_qty:x.suggested_qty, lead_time_days:suppliers.find(s=>s.name===x.supplier)?.lead_time_days||3, expected_stockout:'2026-09-24' })),
+  prices: [{ id:1, supplier:'TorqueLine Components', sku:'BRK-1048', product:'Ceramic Brake Pad Set', unit_cost:1519, captured_at:'2026-09-21T09:00:00+05:30' }],
+}
+
+export const portalState = { tokens: {} }
+
 export const customers = [
   { id:1, name:'Anil Verma', company:'Metro Garage', email:'anil@metrogarage.demo', phone:'+91 98111 10001', customer_type:'workshop', credit_limit:100000, payment_terms_days:15, outstanding_balance:18450, notes:'Regular brake and service parts buyer.' },
   { id:2, name:'Priya Nair', company:'Northline Repairs', email:'priya@northline.demo', phone:'+91 98111 10002', customer_type:'dealer', credit_limit:250000, payment_terms_days:30, outstanding_balance:32600, notes:'Priority dealer pricing.' },

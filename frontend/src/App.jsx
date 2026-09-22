@@ -3,6 +3,7 @@ import { useAuth } from './context/AuthContext'
 import LandingPage from './pages/LandingPage'
 import LoginPage from './pages/LoginPage'
 import DashboardPage from './pages/DashboardPage'
+import { PublicPortalPage } from './pages/OperationsPages'
 
 function ProtectedRoute({ children }) {
   const { user } = useAuth()
@@ -14,6 +15,7 @@ export default function App() {
     <Routes>
       <Route path="/" element={<LandingPage />} />
       <Route path="/login" element={<LoginPage />} />
+      <Route path="/portal/:token" element={<PublicPortalPage />} />
       <Route path="/app/*" element={<ProtectedRoute><DashboardPage /></ProtectedRoute>} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
