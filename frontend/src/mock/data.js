@@ -6,10 +6,10 @@ export const demoAccounts = [
 ]
 
 export const modulesByRole = {
-  admin: ['dashboard', 'inventory', 'quotations', 'suppliers', 'stock', 'barcodes', 'fitments', 'purchase_orders', 'warehouses', 'reorder', 'sales_flow', 'crm', 'pricing', 'analytics', 'governance'],
-  manager: ['dashboard', 'inventory', 'quotations', 'suppliers', 'stock', 'barcodes', 'fitments', 'purchase_orders', 'warehouses', 'reorder', 'sales_flow', 'crm', 'pricing', 'analytics', 'governance'],
-  sales: ['dashboard', 'inventory', 'quotations', 'barcodes', 'fitments', 'sales_flow', 'crm', 'pricing', 'analytics', 'governance'],
-  store: ['dashboard', 'inventory', 'stock', 'barcodes', 'fitments', 'purchase_orders', 'warehouses', 'reorder', 'governance'],
+  admin: ['dashboard', 'inventory', 'quotations', 'suppliers', 'stock', 'barcodes', 'fitments', 'purchase_orders', 'warehouses', 'reorder', 'sales_flow', 'fulfillment', 'crm', 'pricing', 'analytics', 'governance'],
+  manager: ['dashboard', 'inventory', 'quotations', 'suppliers', 'stock', 'barcodes', 'fitments', 'purchase_orders', 'warehouses', 'reorder', 'sales_flow', 'fulfillment', 'crm', 'pricing', 'analytics', 'governance'],
+  sales: ['dashboard', 'inventory', 'quotations', 'barcodes', 'fitments', 'sales_flow', 'fulfillment', 'crm', 'pricing', 'analytics', 'governance'],
+  store: ['dashboard', 'inventory', 'stock', 'barcodes', 'fitments', 'purchase_orders', 'warehouses', 'reorder', 'fulfillment', 'governance'],
 }
 
 export const inventory = [
@@ -87,6 +87,13 @@ export function reorderSuggestions(){
 export const salesFlow = {
   orders: [
     { id:1, order_no:'SO-260921-41BC', quote_no:'QT-260921-103', customer_name:'Priya Nair', customer_company:'Northline Repairs', total:32600, status:'confirmed', invoice_no:null, created_at:'2026-09-21T11:10:00+05:30' },
+  ],
+  invoices: [],
+}
+
+export const fulfillmentState = {
+  orders: [
+    { id:1, order_no:'SO-260921-41BC', quote_no:'QT-260921-103', customer_name:'Priya Nair', customer_company:'Northline Repairs', total:32600, status:'confirmed', fulfillment_status:'confirmed', shipping_address:'Sector 18, Gurugram', invoice_no:null, reserved:false, items:[{id:1,sku:'BRK-1048',product:'Ceramic Brake Pad Set',quantity:4,unit_price:2450,line_total:9800,available:38},{id:2,sku:'HLM-H7',product:'H7 LED Headlamp Pair',quantity:2,unit_price:1650,line_total:3300,available:26}], created_at:'2026-09-21T11:10:00+05:30' },
   ],
   invoices: [],
 }

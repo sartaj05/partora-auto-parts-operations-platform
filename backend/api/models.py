@@ -1,5 +1,6 @@
 from django.contrib.auth.models import User
 from django.db import models
+from django.utils import timezone
 
 class Profile(models.Model):
     ROLE_CHOICES = [
@@ -155,23 +156,45 @@ Product.add_to_class("reorder_qty", models.PositiveIntegerField(default=25))
 
 class SalesOrder(models.Model):
     STATUS_CHOICES = [("confirmed","Confirmed"),("fulfilled","Fulfilled"),("cancelled","Cancelled")]
+    FULFILLMENT_CHOICES = [("confirmed", "Confirmed"), ("picking", "Picking"), ("packed", "Packed"), ("dispatched", "Dispatched"), ("delivered", "Delivered"), ("cancelled", "Cancelled")]
     order_no = models.CharField(max_length=30, unique=True)
     quotation = models.OneToOneField(Quotation, on_delete=models.SET_NULL, null=True, blank=True, related_name="sales_order")
     customer_name = models.CharField(max_length=140)
     customer_company = models.CharField(max_length=140, blank=True)
     total = models.DecimalField(max_digits=14, decimal_places=2)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="confirmed")
+    fulfillment_status = models.CharField(max_length=20, choices=FULFILLMENT_CHOICES, default="confirmed")
+    shipping_address = models.CharField(max_length=240, blank=True)
+    reserved_at = models.DateTimeField(null=True, blank=True)
+    dispatched_at = models.DateTimeField(null=True, blank=True)
+    delivered_at = models.DateTimeField(null=True, blank=True)
     created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name="sales_orders")
     created_at = models.DateTimeField(auto_now_add=True)
 
+class SalesOrderItem(models.Model):
+    sales_order = models.ForeignKey(SalesOrder, on_delete=models.CASCADE, related_name="items")
+    product = models.ForeignKey(Product, on_delete=models.PROTECT, related_name="sales_order_items")
+    quantity = models.PositiveIntegerField()
+    unit_price = models.DecimalField(max_digits=12, decimal_places=2)
+    line_total = models.DecimalField(max_digits=14, decimal_places=2)
+
 class Invoice(models.Model):
-    STATUS_CHOICES = [("issued","Issued"),("paid","Paid"),("overdue","Overdue"),("cancelled","Cancelled")]
+    STATUS_CHOICES = [("issued","Issued"),("partial","Partially paid"),("paid","Paid"),("overdue","Overdue"),("cancelled","Cancelled")]
     invoice_no = models.CharField(max_length=30, unique=True)
     sales_order = models.OneToOneField(SalesOrder, on_delete=models.PROTECT, related_name="invoice")
     total = models.DecimalField(max_digits=14, decimal_places=2)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="issued")
     due_date = models.DateField()
     created_at = models.DateTimeField(auto_now_add=True)
+
+class Payment(models.Model):
+    METHOD_CHOICES = [("cash", "Cash"), ("bank", "Bank transfer"), ("upi", "UPI"), ("card", "Card"), ("credit", "Credit terms")]
+    invoice = models.ForeignKey(Invoice, on_delete=models.PROTECT, related_name="payments")
+    amount = models.DecimalField(max_digits=14, decimal_places=2)
+    method = models.CharField(max_length=20, choices=METHOD_CHOICES, default="bank")
+    reference = models.CharField(max_length=80, blank=True)
+    paid_at = models.DateTimeField(default=timezone.now)
+    created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name="partora_payments")
 
 class Customer(models.Model):
     TYPE_CHOICES = [("retail","Retail"),("dealer","Dealer"),("fleet","Fleet"),("workshop","Workshop")]
@@ -194,6 +217,7 @@ class Customer(models.Model):
 Product.add_to_class("cost_price", models.DecimalField(max_digits=12, decimal_places=2, default=0))
 Product.add_to_class("wholesale_price", models.DecimalField(max_digits=12, decimal_places=2, default=0))
 Product.add_to_class("dealer_price", models.DecimalField(max_digits=12, decimal_places=2, default=0))
+Product.add_to_class("reserved_qty", models.PositiveIntegerField(default=0))
 
 class PriceRule(models.Model):
     name = models.CharField(max_length=120)

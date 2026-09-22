@@ -2,19 +2,20 @@ import json
 from datetime import date, timedelta
 from uuid import uuid4
 from django.contrib.auth import authenticate
+from django.db import transaction
 from django.db.models import Count, DecimalField, ExpressionWrapper, F, Q, Sum
 from django.http import JsonResponse
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 from .auth import api_login_required, issue_token, roles_allowed
-from .models import Product, Quotation, StockMovement, Supplier, VehicleFitment, PurchaseOrder, PurchaseOrderItem, Warehouse, WarehouseStock, StockTransfer, SalesOrder, Invoice, Customer, PriceRule, Notification, ApprovalRequest, AuditLog
+from .models import Product, Quotation, StockMovement, Supplier, VehicleFitment, PurchaseOrder, PurchaseOrderItem, Warehouse, WarehouseStock, StockTransfer, SalesOrder, SalesOrderItem, Invoice, Payment, Customer, PriceRule, Notification, ApprovalRequest, AuditLog
 from .serializers import product_dict, quotation_dict, supplier_dict
 
 ROLE_MODULES = {
-    "admin": ["dashboard", "inventory", "quotations", "suppliers", "stock", "barcodes", "fitments", "purchase_orders", "warehouses", "reorder", "sales_flow", "crm", "pricing", "analytics", "governance"],
-    "manager": ["dashboard", "inventory", "quotations", "suppliers", "stock", "barcodes", "fitments", "purchase_orders", "warehouses", "reorder", "sales_flow", "crm", "pricing", "analytics", "governance"],
-    "sales": ["dashboard", "inventory", "quotations", "barcodes", "fitments", "sales_flow", "crm", "pricing", "analytics", "governance"],
-    "store": ["dashboard", "inventory", "stock", "barcodes", "fitments", "purchase_orders", "warehouses", "reorder", "governance"],
+    "admin": ["dashboard", "inventory", "quotations", "suppliers", "stock", "barcodes", "fitments", "purchase_orders", "warehouses", "reorder", "sales_flow", "fulfillment", "crm", "pricing", "analytics", "governance"],
+    "manager": ["dashboard", "inventory", "quotations", "suppliers", "stock", "barcodes", "fitments", "purchase_orders", "warehouses", "reorder", "sales_flow", "fulfillment", "crm", "pricing", "analytics", "governance"],
+    "sales": ["dashboard", "inventory", "quotations", "barcodes", "fitments", "sales_flow", "fulfillment", "crm", "pricing", "analytics", "governance"],
+    "store": ["dashboard", "inventory", "stock", "barcodes", "fitments", "purchase_orders", "warehouses", "reorder", "fulfillment", "governance"],
 }
 
 def parse_body(request):
@@ -338,8 +339,8 @@ def reorder_view(request):
 @roles_allowed("admin", "manager", "sales")
 def sales_flow_view(request):
     if request.method == "GET":
-        orders=[{"id":o.id,"order_no":o.order_no,"quote_no":o.quotation.quote_no if o.quotation else None,"customer_name":o.customer_name,"customer_company":o.customer_company,"total":float(o.total),"status":o.status,"invoice_no":getattr(getattr(o,"invoice",None),"invoice_no",None),"created_at":o.created_at.isoformat()} for o in SalesOrder.objects.select_related("quotation").order_by("-created_at")[:100]]
-        invoices=[{"id":i.id,"invoice_no":i.invoice_no,"order_no":i.sales_order.order_no,"customer":i.sales_order.customer_company or i.sales_order.customer_name,"total":float(i.total),"status":i.status,"due_date":i.due_date.isoformat()} for i in Invoice.objects.select_related("sales_order").order_by("-created_at")[:100]]
+        orders=[sales_order_dict(o) for o in SalesOrder.objects.select_related("quotation").prefetch_related("items__product", "invoice__payments").order_by("-created_at")[:100]]
+        invoices=[invoice_dict(i) for i in Invoice.objects.select_related("sales_order").prefetch_related("payments").order_by("-created_at")[:100]]
         return JsonResponse({"orders":orders,"invoices":invoices})
     if request.method == "POST":
         data=parse_body(request) or {}; action=str(data.get("action","convert_quote"))
@@ -347,17 +348,85 @@ def sales_flow_view(request):
             if action == "convert_quote":
                 quote=Quotation.objects.get(id=int(data["quote_id"]))
                 order,created=SalesOrder.objects.get_or_create(quotation=quote,defaults={"order_no":f"SO-{timezone.now():%y%m%d}-{uuid4().hex[:4].upper()}","customer_name":quote.customer_name,"customer_company":quote.customer_company,"total":quote.total,"status":"confirmed","created_by":request.api_user})
+                if created:
+                    for line in data.get("items", []):
+                        product=Product.objects.get(sku=str(line["sku"]).strip().upper())
+                        quantity=max(1, int(line.get("quantity", 1)))
+                        unit_price=float(line.get("unit_price") or product.price)
+                        SalesOrderItem.objects.create(sales_order=order, product=product, quantity=quantity, unit_price=unit_price, line_total=quantity * unit_price)
                 quote.status="approved"; quote.save(update_fields=["status"])
-                item={"id":order.id,"order_no":order.order_no,"quote_no":quote.quote_no,"customer_name":order.customer_name,"customer_company":order.customer_company,"total":float(order.total),"status":order.status,"invoice_no":getattr(getattr(order,"invoice",None),"invoice_no",None),"created_at":order.created_at.isoformat()}
+                item=sales_order_dict(order)
             elif action == "invoice":
                 order=SalesOrder.objects.get(id=int(data["order_id"])); invoice,created=Invoice.objects.get_or_create(sales_order=order,defaults={"invoice_no":f"INV-{timezone.now():%y%m%d}-{uuid4().hex[:4].upper()}","total":order.total,"status":"issued","due_date":timezone.localdate()+timedelta(days=int(data.get("terms_days",30)))})
-                item={"id":invoice.id,"invoice_no":invoice.invoice_no,"order_no":order.order_no,"customer":order.customer_company or order.customer_name,"total":float(invoice.total),"status":invoice.status,"due_date":invoice.due_date.isoformat()}
+                item=invoice_dict(invoice)
             else:
                 raise ValueError("Unknown action")
         except Exception as exc:
             return JsonResponse({"detail":f"Could not complete sales action: {exc}"},status=400)
         return JsonResponse({"item":item,"action":action},status=201 if created else 200)
     return JsonResponse({"detail":"Method not allowed"},status=405)
+
+def invoice_dict(invoice):
+    paid=float(invoice.payments.aggregate(total=Sum("amount"))["total"] or 0)
+    return {"id":invoice.id,"invoice_no":invoice.invoice_no,"order_no":invoice.sales_order.order_no,"customer":invoice.sales_order.customer_company or invoice.sales_order.customer_name,"total":float(invoice.total),"paid":paid,"balance":max(0, float(invoice.total)-paid),"status":invoice.status,"due_date":invoice.due_date.isoformat()}
+
+def sales_order_dict(order):
+    items=[{"id":line.id,"sku":line.product.sku,"product":line.product.name,"quantity":line.quantity,"unit_price":float(line.unit_price),"line_total":float(line.line_total),"available":max(0, line.product.stock_qty-line.product.reserved_qty)} for line in order.items.all()]
+    invoice=getattr(order, "invoice", None)
+    return {"id":order.id,"order_no":order.order_no,"quote_no":order.quotation.quote_no if order.quotation else None,"customer_name":order.customer_name,"customer_company":order.customer_company,"total":float(order.total),"status":order.status,"fulfillment_status":order.fulfillment_status,"shipping_address":order.shipping_address,"invoice_no":invoice.invoice_no if invoice else None,"items":items,"created_at":order.created_at.isoformat()}
+
+@csrf_exempt
+@roles_allowed("admin", "manager", "sales", "store")
+def fulfillment_view(request):
+    if request.method == "GET":
+        orders=SalesOrder.objects.select_related("quotation").prefetch_related("items__product", "invoice__payments").order_by("-created_at")[:100]
+        return JsonResponse({"orders":[sales_order_dict(o) for o in orders],"invoices":[invoice_dict(i) for i in Invoice.objects.select_related("sales_order").prefetch_related("payments").order_by("-created_at")[:100]]})
+    data=parse_body(request) or {}; action=str(data.get("action", "status"))
+    try:
+        order=SalesOrder.objects.select_related("invoice").prefetch_related("items__product").get(id=int(data["order_id"]))
+        if action == "reserve":
+            if not order.items.exists(): raise ValueError("Add order line items before reserving stock")
+            for line in order.items.all():
+                if line.product.stock_qty-line.product.reserved_qty < line.quantity: raise ValueError(f"Insufficient available stock for {line.product.sku}")
+            for line in order.items.all():
+                line.product.reserved_qty += line.quantity
+                line.product.save(update_fields=["reserved_qty", "updated_at"])
+            order.reserved_at=timezone.now(); order.fulfillment_status="picking"; order.save(update_fields=["reserved_at","fulfillment_status"])
+            record_audit(request,"reserve stock","sales order",order.id,order.order_no)
+        elif action == "status":
+            status=str(data.get("status", "confirmed"))
+            allowed={"confirmed","picking","packed","dispatched","delivered","cancelled"}
+            if status not in allowed: raise ValueError("Invalid fulfillment status")
+            if status == "dispatched":
+                if not order.items.exists(): raise ValueError("Add order line items before dispatch")
+                for line in order.items.all():
+                    if line.product.stock_qty-line.product.reserved_qty < line.quantity: raise ValueError(f"Insufficient available stock for {line.product.sku}")
+                for line in order.items.all():
+                    line.product.stock_qty -= line.quantity
+                    line.product.reserved_qty=max(0,line.product.reserved_qty-line.quantity)
+                    line.product.save(update_fields=["stock_qty","reserved_qty","updated_at"])
+                    StockMovement.objects.create(product=line.product,movement_type="out",quantity=line.quantity,reference=order.order_no)
+                order.dispatched_at=timezone.now()
+            if status == "delivered": order.delivered_at=timezone.now()
+            order.fulfillment_status=status
+            order.status="fulfilled" if status in {"dispatched","delivered"} else ("cancelled" if status=="cancelled" else order.status)
+            order.save(update_fields=["fulfillment_status","status","dispatched_at","delivered_at"])
+            record_audit(request,"fulfillment status","sales order",order.id,f"{order.order_no} → {status}")
+        elif action == "payment":
+            invoice=getattr(order,"invoice",None)
+            if not invoice: raise ValueError("Issue the invoice before recording a payment")
+            amount=float(data.get("amount",0) or 0)
+            if amount <= 0: raise ValueError("Payment amount must be greater than zero")
+            paid=float(invoice.payments.aggregate(total=Sum("amount"))["total"] or 0)
+            if paid+amount > float(invoice.total): raise ValueError("Payment exceeds invoice balance")
+            Payment.objects.create(invoice=invoice,amount=amount,method=str(data.get("method","bank")),reference=str(data.get("reference","")).strip(),created_by=request.api_user)
+            total_paid=paid+amount; invoice.status="paid" if total_paid >= float(invoice.total) else "partial"; invoice.save(update_fields=["status"])
+            record_audit(request,"record payment","invoice",invoice.id,f"{invoice.invoice_no} / {amount}")
+        else:
+            raise ValueError("Unknown fulfillment action")
+    except Exception as exc:
+        return JsonResponse({"detail":f"Could not update fulfillment: {exc}"},status=400)
+    return JsonResponse({"item":sales_order_dict(order),"invoice":invoice_dict(getattr(order,"invoice",None)) if getattr(order,"invoice",None) else None})
 
 @csrf_exempt
 @roles_allowed("admin", "manager", "sales")
