@@ -4,7 +4,7 @@ import { createEndpoint, loadEndpoint } from '../api/client'
 import { useAuth } from '../context/AuthContext'
 import CreateModal from '../components/CreateModal'
 import StatusBadge from '../components/StatusBadge'
-import { BarcodePage, FitmentsPage, PurchaseOrdersPage, WarehousesPage, ReorderPage, SalesFlowPage, FulfillmentPage, ReturnsPage, InventoryControlPage, CustomersPage, PricingPage, AnalyticsPage, GovernancePage } from './OperationsPages'
+import { BarcodePage, FitmentsPage, PurchaseOrdersPage, WarehousesPage, ReorderPage, SalesFlowPage, FulfillmentPage, ReturnsPage, InventoryControlPage, SupplierPerformancePage, CustomersPage, PricingPage, AnalyticsPage, GovernancePage } from './OperationsPages'
 
 const nav = [
   ['dashboard','/app','Overview','⌂'],
@@ -21,6 +21,7 @@ const nav = [
   ['fulfillment','/app/fulfillment','Fulfillment','✓'],
   ['returns','/app/returns','Returns & RMA','↩'],
   ['inventory_control','/app/inventory-control','Cycle counts','⌗'],
+  ['supplier_performance','/app/supplier-performance','Supplier insights','◈'],
   ['crm','/app/customers','Customers','◎'],
   ['pricing','/app/pricing','Pricing','₹'],
   ['analytics','/app/analytics','Analytics','◒'],
@@ -177,6 +178,7 @@ export default function DashboardPage(){
     <Route path="fulfillment" element={<Allowed module="fulfillment"><FulfillmentPage/></Allowed>}/>
     <Route path="returns" element={<Allowed module="returns"><ReturnsPage/></Allowed>}/>
     <Route path="inventory-control" element={<Allowed module="inventory_control"><InventoryControlPage/></Allowed>}/>
+    <Route path="supplier-performance" element={<Allowed module="supplier_performance"><SupplierPerformancePage/></Allowed>}/>
     <Route path="customers" element={<Allowed module="crm"><CustomersPage/></Allowed>}/>
     <Route path="pricing" element={<Allowed module="pricing"><PricingPage/></Allowed>}/>
     <Route path="analytics" element={<Allowed module="analytics"><AnalyticsPage/></Allowed>}/>

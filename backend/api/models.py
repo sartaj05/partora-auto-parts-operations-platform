@@ -113,6 +113,7 @@ class PurchaseOrder(models.Model):
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="draft")
     expected_date = models.DateField(null=True, blank=True)
     total = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    received_at = models.DateTimeField(null=True, blank=True)
     created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name="purchase_orders")
     created_at = models.DateTimeField(auto_now_add=True)
 
@@ -241,6 +242,13 @@ class ProductLot(models.Model):
     quantity = models.PositiveIntegerField(default=1)
     expiry_date = models.DateField(null=True, blank=True)
     received_at = models.DateField(default=timezone.localdate)
+
+class SupplierPriceSnapshot(models.Model):
+    supplier = models.ForeignKey(Supplier, on_delete=models.PROTECT, related_name="price_snapshots")
+    product = models.ForeignKey(Product, on_delete=models.PROTECT, related_name="supplier_price_snapshots")
+    unit_cost = models.DecimalField(max_digits=12, decimal_places=2)
+    source_po = models.ForeignKey(PurchaseOrder, on_delete=models.SET_NULL, null=True, blank=True, related_name="price_snapshots")
+    captured_at = models.DateTimeField(auto_now_add=True)
 
 class Customer(models.Model):
     TYPE_CHOICES = [("retail","Retail"),("dealer","Dealer"),("fleet","Fleet"),("workshop","Workshop")]
