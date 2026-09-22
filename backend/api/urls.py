@@ -19,6 +19,7 @@ urlpatterns = [
     path("sales-flow/", views.sales_flow_view),
     path("fulfillment/", views.fulfillment_view),
     path("returns/", views.returns_view),
+    path("inventory-control/", views.inventory_control_view),
     path("customers/", views.customers_view),
     path("pricing/", views.pricing_view),
     path("analytics/", views.analytics_view),
