@@ -1,4 +1,4 @@
-import { analyticsData, customers, demoAccounts, fitments, fulfillmentState, governanceState, inventory, inventoryControlState, mockDashboard, modulesByRole, priceRules, purchaseOrders, quotations, reorderSuggestions, returnsState, salesFlow, stock, suppliers, warehouseState } from '../mock/data'
+import { analyticsData, customers, demoAccounts, fitments, fulfillmentState, governanceState, inventory, inventoryControlState, mockDashboard, modulesByRole, priceRules, purchaseOrders, quotations, reorderSuggestions, returnsState, salesFlow, stock, supplierPerformanceState, suppliers, warehouseState } from '../mock/data'
 
 const API_BASE = (import.meta.env.VITE_API_URL || '/api').replace(/\/$/, '')
 const NETWORK_MESSAGE = 'Backend unavailable. Demo mode is active.'
@@ -58,6 +58,7 @@ const fallback = {
   '/fulfillment/': () => fulfillmentState,
   '/returns/': () => returnsState,
   '/inventory-control/': () => inventoryControlState,
+  '/supplier-performance/': () => supplierPerformanceState,
   '/customers/': () => ({ items: customers, count: customers.length }),
   '/pricing/': () => ({ items: priceRules }),
   '/analytics/': () => analyticsData(),
@@ -112,6 +113,9 @@ function createMock(path, payload, role) {
     if(payload.action==='count'){const product=inventory.find(x=>x.sku===String(payload.sku||'').toUpperCase());if(!product)throw new Error('SKU not found');const expected=Number(payload.expected_qty??product.stock_qty);const counted=Number(payload.counted_qty||0);const item={id:Date.now(),reference:`CNT-DEMO-${String(Date.now()).slice(-4)}`,warehouse:payload.warehouse||null,status:'submitted',notes:payload.notes||'',counted_by:'Demo User',created_at:new Date().toISOString(),lines:[{sku:product.sku,product:product.name,expected_qty:expected,counted_qty:counted,variance:counted-expected}]};inventoryControlState.counts.unshift(item);return {item}}
     if(payload.action==='approve'){const item=inventoryControlState.counts.find(x=>x.id===Number(payload.id));if(!item)throw new Error('Count not found');item.status='approved';item.lines.forEach(line=>{const product=inventory.find(x=>x.sku===line.sku);if(product){product.stock_qty=line.counted_qty;product.stock_status=product.stock_qty<=product.reorder_level?'low':'healthy'}});return {item}}
     if(payload.action==='lot'){const product=inventory.find(x=>x.sku===String(payload.sku||'').toUpperCase());if(!product)throw new Error('SKU not found');const item={id:Date.now(),sku:product.sku,product:product.name,lot_no:payload.lot_no,serial_no:payload.serial_no||'',quantity:Number(payload.quantity||1),warehouse:payload.warehouse||null,expiry_date:payload.expiry_date||null};inventoryControlState.lots.unshift(item);return {item}}
+  }
+  if (path === '/supplier-performance/') {
+    const product=inventory.find(x=>x.sku===String(payload.sku||'').toUpperCase());const supplier=suppliers.find(x=>x.name===payload.supplier);if(!product||!supplier)throw new Error('Supplier or SKU not found');const item={id:Date.now(),supplier:supplier.name,sku:product.sku,product:product.name,unit_cost:Number(payload.unit_cost||product.cost_price||product.price),captured_at:new Date().toISOString()};supplierPerformanceState.prices.unshift(item);return {item}
   }
   if (path === '/reorder/') {
     const product=inventory.find(x=>x.sku===String(payload.sku||'').toUpperCase());if(!product)throw new Error('SKU not found')

@@ -20,6 +20,7 @@ urlpatterns = [
     path("fulfillment/", views.fulfillment_view),
     path("returns/", views.returns_view),
     path("inventory-control/", views.inventory_control_view),
+    path("supplier-performance/", views.supplier_performance_view),
     path("customers/", views.customers_view),
     path("pricing/", views.pricing_view),
     path("analytics/", views.analytics_view),

@@ -8,14 +8,14 @@ from django.http import JsonResponse
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 from .auth import api_login_required, issue_token, roles_allowed
-from .models import Product, Quotation, StockMovement, Supplier, VehicleFitment, PurchaseOrder, PurchaseOrderItem, Warehouse, WarehouseStock, StockTransfer, SalesOrder, SalesOrderItem, Invoice, Payment, ReturnRequest, InventoryCount, InventoryCountLine, ProductLot, Customer, PriceRule, Notification, ApprovalRequest, AuditLog
+from .models import Product, Quotation, StockMovement, Supplier, VehicleFitment, PurchaseOrder, PurchaseOrderItem, Warehouse, WarehouseStock, StockTransfer, SalesOrder, SalesOrderItem, Invoice, Payment, ReturnRequest, InventoryCount, InventoryCountLine, ProductLot, SupplierPriceSnapshot, Customer, PriceRule, Notification, ApprovalRequest, AuditLog
 from .serializers import product_dict, quotation_dict, supplier_dict
 
 ROLE_MODULES = {
-    "admin": ["dashboard", "inventory", "quotations", "suppliers", "stock", "barcodes", "fitments", "purchase_orders", "warehouses", "reorder", "sales_flow", "fulfillment", "returns", "inventory_control", "crm", "pricing", "analytics", "governance"],
-    "manager": ["dashboard", "inventory", "quotations", "suppliers", "stock", "barcodes", "fitments", "purchase_orders", "warehouses", "reorder", "sales_flow", "fulfillment", "returns", "inventory_control", "crm", "pricing", "analytics", "governance"],
+    "admin": ["dashboard", "inventory", "quotations", "suppliers", "stock", "barcodes", "fitments", "purchase_orders", "warehouses", "reorder", "sales_flow", "fulfillment", "returns", "inventory_control", "supplier_performance", "crm", "pricing", "analytics", "governance"],
+    "manager": ["dashboard", "inventory", "quotations", "suppliers", "stock", "barcodes", "fitments", "purchase_orders", "warehouses", "reorder", "sales_flow", "fulfillment", "returns", "inventory_control", "supplier_performance", "crm", "pricing", "analytics", "governance"],
     "sales": ["dashboard", "inventory", "quotations", "barcodes", "fitments", "sales_flow", "fulfillment", "returns", "crm", "pricing", "analytics", "governance"],
-    "store": ["dashboard", "inventory", "stock", "barcodes", "fitments", "purchase_orders", "warehouses", "reorder", "sales_flow", "fulfillment", "returns", "inventory_control", "governance"],
+    "store": ["dashboard", "inventory", "stock", "barcodes", "fitments", "purchase_orders", "warehouses", "reorder", "sales_flow", "fulfillment", "returns", "inventory_control", "supplier_performance", "governance"],
 }
 
 def parse_body(request):
@@ -269,7 +269,7 @@ def purchase_orders_view(request):
                         line.received_qty += remaining; line.save(update_fields=["received_qty"])
                         line.product.stock_qty += remaining; line.product.save(update_fields=["stock_qty","updated_at"])
                         StockMovement.objects.create(product=line.product,movement_type="in",quantity=remaining,reference=po.po_no)
-                po.status="received"; po.save(update_fields=["status"])
+                po.status="received"; po.received_at=timezone.now(); po.save(update_fields=["status","received_at"])
             except Exception as exc:
                 return JsonResponse({"detail":f"Could not receive purchase order: {exc}"},status=400)
             return JsonResponse({"item":{"id":po.id,"po_no":po.po_no,"supplier":po.supplier.name,"status":po.status,"expected_date":po.expected_date.isoformat() if po.expected_date else None,"total":float(po.total),"line_count":po.items.count(),"received_lines":po.items.count()}})
@@ -280,6 +280,7 @@ def purchase_orders_view(request):
             qty=max(1,int(data.get("quantity",1))); unit_cost=float(data.get("unit_cost") or product.price)
             po=PurchaseOrder.objects.create(po_no=f"PO-{timezone.now():%y%m%d}-{uuid4().hex[:4].upper()}",supplier=supplier,status=str(data.get("status","draft")),expected_date=expected,total=qty*unit_cost,created_by=request.api_user)
             PurchaseOrderItem.objects.create(purchase_order=po,product=product,quantity=qty,unit_cost=unit_cost)
+            SupplierPriceSnapshot.objects.create(supplier=supplier,product=product,unit_cost=unit_cost,source_po=po)
         except Exception as exc:
             return JsonResponse({"detail":f"Could not create purchase order: {exc}"},status=400)
         return JsonResponse({"item":{"id":po.id,"po_no":po.po_no,"supplier":po.supplier.name,"status":po.status,"expected_date":po.expected_date.isoformat() if po.expected_date else None,"total":float(po.total),"created_by":request.api_user.get_full_name() or request.api_user.username,"line_count":1,"received_lines":0}},status=201)
@@ -496,6 +497,32 @@ def inventory_control_view(request):
     except Exception as exc:
         return JsonResponse({"detail":f"Could not update inventory control: {exc}"},status=400)
     return JsonResponse({"item":item})
+
+@csrf_exempt
+@roles_allowed("admin", "manager", "store")
+def supplier_performance_view(request):
+    if request.method == "GET":
+        suppliers=[]
+        for supplier in Supplier.objects.filter(active=True).order_by("name"):
+            orders=list(PurchaseOrder.objects.filter(supplier=supplier).prefetch_related("items"))
+            received=[po for po in orders if po.received_at]
+            on_time=[po for po in received if not po.expected_date or po.received_at.date() <= po.expected_date]
+            ordered_units=sum(line.quantity for po in orders for line in po.items.all())
+            received_units=sum(line.received_qty for po in orders for line in po.items.all())
+            latest=SupplierPriceSnapshot.objects.filter(supplier=supplier).order_by("-captured_at").first()
+            suppliers.append({"id":supplier.id,"name":supplier.name,"lead_time_days":supplier.lead_time_days,"rating":float(supplier.rating),"po_count":len(orders),"received_count":len(received),"on_time_rate":round(len(on_time)/len(received)*100,1) if received else None,"fill_rate":round(received_units/ordered_units*100,1) if ordered_units else None,"latest_cost":float(latest.unit_cost) if latest else None})
+        plans=[]
+        for product in Product.objects.select_related("supplier").filter(stock_qty__lte=F("reorder_level"),supplier__isnull=False).order_by("stock_qty")[:100]:
+            plans.append({"sku":product.sku,"product":product.name,"supplier":product.supplier.name,"stock_qty":product.stock_qty,"reorder_level":product.reorder_level,"suggested_qty":max(product.reorder_qty,product.reorder_level*2-product.stock_qty),"lead_time_days":product.supplier.lead_time_days,"expected_stockout":(timezone.localdate()+timedelta(days=product.supplier.lead_time_days)).isoformat()})
+        prices=[{"id":s.id,"supplier":s.supplier.name,"sku":s.product.sku,"product":s.product.name,"unit_cost":float(s.unit_cost),"captured_at":s.captured_at.isoformat()} for s in SupplierPriceSnapshot.objects.select_related("supplier","product").order_by("-captured_at")[:30]]
+        return JsonResponse({"suppliers":suppliers,"plans":plans,"prices":prices})
+    data=parse_body(request) or {}
+    try:
+        supplier=Supplier.objects.get(name=str(data["supplier"]).strip()); product=Product.objects.get(sku=str(data["sku"]).strip().upper()); snapshot=SupplierPriceSnapshot.objects.create(supplier=supplier,product=product,unit_cost=float(data["unit_cost"]))
+    except Exception as exc:
+        return JsonResponse({"detail":f"Could not record supplier price: {exc}"},status=400)
+    record_audit(request,"record supplier price","supplier",supplier.id,f"{product.sku} / {snapshot.unit_cost}")
+    return JsonResponse({"item":{"id":snapshot.id,"supplier":supplier.name,"sku":product.sku,"product":product.name,"unit_cost":float(snapshot.unit_cost),"captured_at":snapshot.captured_at.isoformat()}},status=201)
 
 @csrf_exempt
 @roles_allowed("admin", "manager", "sales")
