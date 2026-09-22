@@ -8,14 +8,14 @@ from django.http import JsonResponse
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 from .auth import api_login_required, issue_token, roles_allowed
-from .models import Product, Quotation, StockMovement, Supplier, VehicleFitment, PurchaseOrder, PurchaseOrderItem, Warehouse, WarehouseStock, StockTransfer, SalesOrder, SalesOrderItem, Invoice, Payment, Customer, PriceRule, Notification, ApprovalRequest, AuditLog
+from .models import Product, Quotation, StockMovement, Supplier, VehicleFitment, PurchaseOrder, PurchaseOrderItem, Warehouse, WarehouseStock, StockTransfer, SalesOrder, SalesOrderItem, Invoice, Payment, ReturnRequest, Customer, PriceRule, Notification, ApprovalRequest, AuditLog
 from .serializers import product_dict, quotation_dict, supplier_dict
 
 ROLE_MODULES = {
-    "admin": ["dashboard", "inventory", "quotations", "suppliers", "stock", "barcodes", "fitments", "purchase_orders", "warehouses", "reorder", "sales_flow", "fulfillment", "crm", "pricing", "analytics", "governance"],
-    "manager": ["dashboard", "inventory", "quotations", "suppliers", "stock", "barcodes", "fitments", "purchase_orders", "warehouses", "reorder", "sales_flow", "fulfillment", "crm", "pricing", "analytics", "governance"],
-    "sales": ["dashboard", "inventory", "quotations", "barcodes", "fitments", "sales_flow", "fulfillment", "crm", "pricing", "analytics", "governance"],
-    "store": ["dashboard", "inventory", "stock", "barcodes", "fitments", "purchase_orders", "warehouses", "reorder", "fulfillment", "governance"],
+    "admin": ["dashboard", "inventory", "quotations", "suppliers", "stock", "barcodes", "fitments", "purchase_orders", "warehouses", "reorder", "sales_flow", "fulfillment", "returns", "crm", "pricing", "analytics", "governance"],
+    "manager": ["dashboard", "inventory", "quotations", "suppliers", "stock", "barcodes", "fitments", "purchase_orders", "warehouses", "reorder", "sales_flow", "fulfillment", "returns", "crm", "pricing", "analytics", "governance"],
+    "sales": ["dashboard", "inventory", "quotations", "barcodes", "fitments", "sales_flow", "fulfillment", "returns", "crm", "pricing", "analytics", "governance"],
+    "store": ["dashboard", "inventory", "stock", "barcodes", "fitments", "purchase_orders", "warehouses", "reorder", "fulfillment", "returns", "governance"],
 }
 
 def parse_body(request):
@@ -427,6 +427,35 @@ def fulfillment_view(request):
     except Exception as exc:
         return JsonResponse({"detail":f"Could not update fulfillment: {exc}"},status=400)
     return JsonResponse({"item":sales_order_dict(order),"invoice":invoice_dict(getattr(order,"invoice",None)) if getattr(order,"invoice",None) else None})
+
+@csrf_exempt
+@roles_allowed("admin", "manager", "sales", "store")
+def returns_view(request):
+    if request.method == "GET":
+        qs=ReturnRequest.objects.select_related("product","sales_order","created_by").order_by("-created_at")[:200]
+        items=[{"id":r.id,"return_no":r.return_no,"order_no":r.sales_order.order_no if r.sales_order else None,"sku":r.product.sku,"product":r.product.name,"customer_name":r.customer_name,"quantity":r.quantity,"reason":r.reason,"warranty_expires":r.warranty_expires.isoformat() if r.warranty_expires else None,"status":r.status,"resolution":r.resolution,"inspection_notes":r.inspection_notes,"refund_amount":float(r.refund_amount),"stock_restocked":r.stock_restocked,"created_at":r.created_at.isoformat()} for r in qs]
+        return JsonResponse({"items":items})
+    data=parse_body(request) or {}; action=str(data.get("action","create"))
+    try:
+        if action == "create":
+            product=Product.objects.get(sku=str(data["sku"]).strip().upper())
+            order=SalesOrder.objects.filter(id=int(data["order_id"])).first() if data.get("order_id") else None
+            item=ReturnRequest.objects.create(return_no=f"RMA-{timezone.now():%y%m%d}-{uuid4().hex[:4].upper()}",sales_order=order,product=product,customer_name=str(data.get("customer_name") or (order.customer_company if order else "Walk-in customer")).strip(),quantity=max(1,int(data.get("quantity",1))),reason=str(data["reason"]).strip(),warranty_expires=date.fromisoformat(str(data["warranty_expires"])) if data.get("warranty_expires") else None,refund_amount=float(data.get("refund_amount",0) or 0),created_by=request.api_user)
+            record_audit(request,"create","return",item.id,item.return_no)
+        elif action == "status":
+            item=ReturnRequest.objects.select_related("product").get(id=int(data["id"]))
+            status=str(data.get("status",item.status)); resolution=str(data.get("resolution",item.resolution or ""))
+            if status not in dict(ReturnRequest.STATUS_CHOICES): raise ValueError("Invalid return status")
+            item.status=status; item.resolution=resolution; item.inspection_notes=str(data.get("inspection_notes",item.inspection_notes)).strip()
+            if status == "resolved" and resolution == "restock" and not item.stock_restocked:
+                item.product.stock_qty += item.quantity; item.product.save(update_fields=["stock_qty","updated_at"])
+                StockMovement.objects.create(product=item.product,movement_type="in",quantity=item.quantity,reference=item.return_no); item.stock_restocked=True
+            item.save(update_fields=["status","resolution","inspection_notes","stock_restocked","updated_at"])
+            record_audit(request,"return status","return",item.id,f"{item.return_no} → {status}")
+        else: raise ValueError("Unknown return action")
+    except Exception as exc:
+        return JsonResponse({"detail":f"Could not update return: {exc}"},status=400)
+    return JsonResponse({"item":{"id":item.id,"return_no":item.return_no,"order_no":item.sales_order.order_no if item.sales_order else None,"sku":item.product.sku,"product":item.product.name,"customer_name":item.customer_name,"quantity":item.quantity,"reason":item.reason,"warranty_expires":item.warranty_expires.isoformat() if item.warranty_expires else None,"status":item.status,"resolution":item.resolution,"inspection_notes":item.inspection_notes,"refund_amount":float(item.refund_amount),"stock_restocked":item.stock_restocked,"created_at":item.created_at.isoformat()}})
 
 @csrf_exempt
 @roles_allowed("admin", "manager", "sales")

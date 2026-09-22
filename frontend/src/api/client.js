@@ -1,4 +1,4 @@
-import { analyticsData, customers, demoAccounts, fitments, fulfillmentState, governanceState, inventory, mockDashboard, modulesByRole, priceRules, purchaseOrders, quotations, reorderSuggestions, salesFlow, stock, suppliers, warehouseState } from '../mock/data'
+import { analyticsData, customers, demoAccounts, fitments, fulfillmentState, governanceState, inventory, mockDashboard, modulesByRole, priceRules, purchaseOrders, quotations, reorderSuggestions, returnsState, salesFlow, stock, suppliers, warehouseState } from '../mock/data'
 
 const API_BASE = (import.meta.env.VITE_API_URL || '/api').replace(/\/$/, '')
 const NETWORK_MESSAGE = 'Backend unavailable. Demo mode is active.'
@@ -56,6 +56,7 @@ const fallback = {
   '/reorder/': () => ({ items: reorderSuggestions(), count: reorderSuggestions().length }),
   '/sales-flow/': () => salesFlow,
   '/fulfillment/': () => fulfillmentState,
+  '/returns/': () => returnsState,
   '/customers/': () => ({ items: customers, count: customers.length }),
   '/pricing/': () => ({ items: priceRules }),
   '/analytics/': () => analyticsData(),
@@ -101,6 +102,10 @@ function createMock(path, payload, role) {
       let invoice=fulfillmentState.invoices.find(x=>x.order_no===order.order_no); if(!invoice){invoice={id:Date.now(),invoice_no:`INV-DEMO-${String(Date.now()).slice(-4)}`,order_no:order.order_no,customer:order.customer_company||order.customer_name,total:order.total,paid:0,balance:order.total,status:'issued',due_date:new Date(Date.now()+30*86400000).toISOString().slice(0,10)};fulfillmentState.invoices.unshift(invoice);order.invoice_no=invoice.invoice_no}
       invoice.paid+=Number(payload.amount||0);invoice.balance=Math.max(0,invoice.total-invoice.paid);invoice.status=invoice.balance===0?'paid':'partial';return {item:order,invoice}
     }
+  }
+  if (path === '/returns/') {
+    if(payload.action==='create'){const product=inventory.find(x=>x.sku===String(payload.sku||'').toUpperCase());if(!product)throw new Error('SKU not found');const item={id:Date.now(),return_no:`RMA-DEMO-${String(Date.now()).slice(-4)}`,order_no:payload.order_no||null,sku:product.sku,product:product.name,customer_name:payload.customer_name||'Walk-in customer',quantity:Number(payload.quantity||1),reason:payload.reason,warranty_expires:payload.warranty_expires||null,status:'requested',resolution:'',inspection_notes:'',refund_amount:Number(payload.refund_amount||0),stock_restocked:false,created_at:new Date().toISOString()};returnsState.items.unshift(item);return {item}}
+    const item=returnsState.items.find(x=>x.id===Number(payload.id));if(!item)throw new Error('Return not found');item.status=payload.status||item.status;item.resolution=payload.resolution||item.resolution;item.inspection_notes=payload.inspection_notes||item.inspection_notes;item.stock_restocked=item.status==='resolved'&&item.resolution==='restock';return {item}
   }
   if (path === '/reorder/') {
     const product=inventory.find(x=>x.sku===String(payload.sku||'').toUpperCase());if(!product)throw new Error('SKU not found')
