@@ -98,6 +98,10 @@ export const fulfillmentState = {
   invoices: [],
 }
 
+export const returnsState = {
+  items: [{ id:1, return_no:'RMA-260921-7A2C', order_no:'SO-260921-41BC', sku:'BRK-1048', product:'Ceramic Brake Pad Set', customer_name:'Northline Repairs', quantity:1, reason:'Fitment issue reported after installation', warranty_expires:'2027-09-21', status:'requested', resolution:'', inspection_notes:'', refund_amount:0, stock_restocked:false, created_at:'2026-09-21T12:05:00+05:30' }],
+}
+
 export const customers = [
   { id:1, name:'Anil Verma', company:'Metro Garage', email:'anil@metrogarage.demo', phone:'+91 98111 10001', customer_type:'workshop', credit_limit:100000, payment_terms_days:15, outstanding_balance:18450, notes:'Regular brake and service parts buyer.' },
   { id:2, name:'Priya Nair', company:'Northline Repairs', email:'priya@northline.demo', phone:'+91 98111 10002', customer_type:'dealer', credit_limit:250000, payment_terms_days:30, outstanding_balance:32600, notes:'Priority dealer pricing.' },
