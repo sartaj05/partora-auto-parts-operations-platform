@@ -1,4 +1,4 @@
-import { analyticsData, customers, demoAccounts, fitments, fulfillmentState, governanceState, inventory, inventoryControlState, mockDashboard, modulesByRole, priceRules, purchaseOrders, quotations, reorderSuggestions, returnsState, salesFlow, stock, supplierPerformanceState, suppliers, warehouseState } from '../mock/data'
+import { analyticsData, customers, demoAccounts, fitments, fulfillmentState, governanceState, inventory, inventoryControlState, mockDashboard, modulesByRole, portalState, priceRules, purchaseOrders, quotations, reorderSuggestions, returnsState, salesFlow, stock, supplierPerformanceState, suppliers, warehouseState } from '../mock/data'
 
 const API_BASE = (import.meta.env.VITE_API_URL || '/api').replace(/\/$/, '')
 const NETWORK_MESSAGE = 'Backend unavailable. Demo mode is active.'
@@ -78,6 +78,21 @@ export async function loadEndpoint(path, role) {
   }
 }
 
+function demoPortal(token){
+  if(!portalState.tokens[token]){const customer=customers[0];portalState.tokens[token]={token,customer:{id:customer.id,name:customer.name,company:customer.company,email:customer.email},quotes:quotations.filter(q=>q.customer_company===customer.company).map(q=>({...q})),orders:salesFlow.orders.filter(o=>o.customer_company===customer.company).map(o=>({...o,fulfillment_status:o.status})),invoices:fulfillmentState.invoices.filter(i=>i.customer===customer.company).map(i=>({...i}))}}
+  return portalState.tokens[token]
+}
+
+export async function loadPortal(token) {
+  try { return { data: await request(`/portal/?token=${encodeURIComponent(token)}`), demoMode:false } }
+  catch (error) { if(error.status && error.status < 500) throw error; await sleep(120); return { data:demoPortal(token), demoMode:true } }
+}
+
+export async function portalAction(token, payload) {
+  try { return { ...(await request('/portal/', {method:'POST',body:JSON.stringify({token,...payload})})), demoMode:false } }
+  catch (error) { if(error.status && error.status < 500) throw error; await sleep(120); const data=demoPortal(token); if(payload.action==='approve_quote'){const q=data.quotes.find(x=>x.id===Number(payload.quote_id));if(q)q.status='approved'} if(payload.action==='repeat_order'){const o=data.orders.find(x=>x.id===Number(payload.order_id));if(o)data.quotes.unshift({id:Date.now(),quote_no:`QT-DEMO-${String(Date.now()).slice(-4)}`,total:o.total,status:'draft',valid_until:new Date(Date.now()+7*86400000).toISOString().slice(0,10)})} return { ...data, demoMode:true } }
+}
+
 function createMock(path, payload, role) {
   const id = Date.now()
   if (path === '/governance/') {
@@ -116,6 +131,9 @@ function createMock(path, payload, role) {
   }
   if (path === '/supplier-performance/') {
     const product=inventory.find(x=>x.sku===String(payload.sku||'').toUpperCase());const supplier=suppliers.find(x=>x.name===payload.supplier);if(!product||!supplier)throw new Error('Supplier or SKU not found');const item={id:Date.now(),supplier:supplier.name,sku:product.sku,product:product.name,unit_cost:Number(payload.unit_cost||product.cost_price||product.price),captured_at:new Date().toISOString()};supplierPerformanceState.prices.unshift(item);return {item}
+  }
+  if (path === '/portal/issue/') {
+    const customer=customers.find(x=>x.id===Number(payload.customer_id));if(!customer)throw new Error('Customer not found');const token=`demo-${customer.id}-${Date.now()}`;const data={token,customer:{id:customer.id,name:customer.name,company:customer.company,email:customer.email},quotes:quotations.filter(q=>q.customer_company===customer.company).map(q=>({...q})),orders:salesFlow.orders.filter(o=>o.customer_company===customer.company).map(o=>({...o,fulfillment_status:o.status})),invoices:[]};portalState.tokens[token]=data;return {item:{token,customer:customer.company||customer.name,expires_at:new Date(Date.now()+30*86400000).toISOString(),portal_path:`/portal/${token}`},portal:data}
   }
   if (path === '/reorder/') {
     const product=inventory.find(x=>x.sku===String(payload.sku||'').toUpperCase());if(!product)throw new Error('SKU not found')

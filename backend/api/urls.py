@@ -22,6 +22,8 @@ urlpatterns = [
     path("inventory-control/", views.inventory_control_view),
     path("supplier-performance/", views.supplier_performance_view),
     path("customers/", views.customers_view),
+    path("portal/", views.portal_view),
+    path("portal/issue/", views.portal_issue_view),
     path("pricing/", views.pricing_view),
     path("analytics/", views.analytics_view),
     path("governance/", views.governance_view),

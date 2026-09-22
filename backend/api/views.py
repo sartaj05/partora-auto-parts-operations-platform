@@ -8,13 +8,13 @@ from django.http import JsonResponse
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 from .auth import api_login_required, issue_token, roles_allowed
-from .models import Product, Quotation, StockMovement, Supplier, VehicleFitment, PurchaseOrder, PurchaseOrderItem, Warehouse, WarehouseStock, StockTransfer, SalesOrder, SalesOrderItem, Invoice, Payment, ReturnRequest, InventoryCount, InventoryCountLine, ProductLot, SupplierPriceSnapshot, Customer, PriceRule, Notification, ApprovalRequest, AuditLog
+from .models import Product, Quotation, StockMovement, Supplier, VehicleFitment, PurchaseOrder, PurchaseOrderItem, Warehouse, WarehouseStock, StockTransfer, SalesOrder, SalesOrderItem, Invoice, Payment, ReturnRequest, InventoryCount, InventoryCountLine, ProductLot, SupplierPriceSnapshot, Customer, CustomerPortalToken, PriceRule, Notification, ApprovalRequest, AuditLog
 from .serializers import product_dict, quotation_dict, supplier_dict
 
 ROLE_MODULES = {
-    "admin": ["dashboard", "inventory", "quotations", "suppliers", "stock", "barcodes", "fitments", "purchase_orders", "warehouses", "reorder", "sales_flow", "fulfillment", "returns", "inventory_control", "supplier_performance", "crm", "pricing", "analytics", "governance"],
-    "manager": ["dashboard", "inventory", "quotations", "suppliers", "stock", "barcodes", "fitments", "purchase_orders", "warehouses", "reorder", "sales_flow", "fulfillment", "returns", "inventory_control", "supplier_performance", "crm", "pricing", "analytics", "governance"],
-    "sales": ["dashboard", "inventory", "quotations", "barcodes", "fitments", "sales_flow", "fulfillment", "returns", "crm", "pricing", "analytics", "governance"],
+    "admin": ["dashboard", "inventory", "quotations", "suppliers", "stock", "barcodes", "fitments", "purchase_orders", "warehouses", "reorder", "sales_flow", "fulfillment", "returns", "inventory_control", "supplier_performance", "portal", "crm", "pricing", "analytics", "governance"],
+    "manager": ["dashboard", "inventory", "quotations", "suppliers", "stock", "barcodes", "fitments", "purchase_orders", "warehouses", "reorder", "sales_flow", "fulfillment", "returns", "inventory_control", "supplier_performance", "portal", "crm", "pricing", "analytics", "governance"],
+    "sales": ["dashboard", "inventory", "quotations", "barcodes", "fitments", "sales_flow", "fulfillment", "returns", "portal", "crm", "pricing", "analytics", "governance"],
     "store": ["dashboard", "inventory", "stock", "barcodes", "fitments", "purchase_orders", "warehouses", "reorder", "sales_flow", "fulfillment", "returns", "inventory_control", "supplier_performance", "governance"],
 }
 
@@ -540,6 +540,45 @@ def customers_view(request):
             return JsonResponse({"detail":f"Could not add customer: {exc}"},status=400)
         return JsonResponse({"item":{"id":c.id,"name":c.name,"company":c.company,"email":c.email,"phone":c.phone,"customer_type":c.customer_type,"credit_limit":float(c.credit_limit),"payment_terms_days":c.payment_terms_days,"outstanding_balance":float(c.outstanding_balance),"notes":c.notes}},status=201)
     return JsonResponse({"detail":"Method not allowed"},status=405)
+
+def portal_payload(customer, token):
+    quotes=Quotation.objects.filter(Q(customer_company=customer.company)|Q(customer_name=customer.name)).order_by("-created_at")[:30]
+    orders=SalesOrder.objects.filter(Q(customer_company=customer.company)|Q(customer_name=customer.name)).select_related("quotation").order_by("-created_at")[:30]
+    invoices=Invoice.objects.filter(sales_order__in=orders).select_related("sales_order").prefetch_related("payments")
+    return {"token":token,"customer":{"id":customer.id,"name":customer.name,"company":customer.company,"email":customer.email},"quotes":[{"id":q.id,"quote_no":q.quote_no,"total":float(q.total),"status":q.status,"valid_until":q.valid_until.isoformat()} for q in quotes],"orders":[{"id":o.id,"order_no":o.order_no,"total":float(o.total),"status":o.status,"fulfillment_status":o.fulfillment_status,"created_at":o.created_at.isoformat()} for o in orders],"invoices":[invoice_dict(i) for i in invoices]}
+
+@csrf_exempt
+def portal_view(request):
+    token_value=request.GET.get("token","").strip() if request.method == "GET" else str((parse_body(request) or {}).get("token","")).strip()
+    try:
+        access=CustomerPortalToken.objects.select_related("customer").get(token=token_value,active=True,expires_at__gt=timezone.now())
+    except CustomerPortalToken.DoesNotExist:
+        return JsonResponse({"detail":"Portal link is invalid or expired"},status=401)
+    if request.method == "GET": return JsonResponse(portal_payload(access.customer,access.token))
+    data=parse_body(request) or {}; action=str(data.get("action",""))
+    try:
+        if action == "approve_quote":
+            quote=Quotation.objects.get(id=int(data["quote_id"])); quote.status="approved"; quote.save(update_fields=["status"]); result={"quote_id":quote.id,"status":quote.status}
+        elif action == "repeat_order":
+            order=SalesOrder.objects.get(id=int(data["order_id"])); quote=Quotation.objects.create(quote_no=f"QT-{timezone.now():%y%m%d}-{uuid4().hex[:4].upper()}",customer_name=access.customer.name,customer_company=access.customer.company,total=order.total,status="draft",valid_until=timezone.localdate()+timedelta(days=7),created_by=None); result={"quote_no":quote.quote_no,"status":quote.status}
+        elif action == "download_invoice":
+            invoice=Invoice.objects.get(id=int(data["invoice_id"])); result=invoice_dict(invoice)
+        else: raise ValueError("Unknown portal action")
+    except Exception as exc:
+        return JsonResponse({"detail":f"Could not complete portal action: {exc}"},status=400)
+    return JsonResponse({"item":result,**portal_payload(access.customer,access.token)})
+
+@csrf_exempt
+@roles_allowed("admin", "manager", "sales")
+def portal_issue_view(request):
+    if request.method != "POST": return JsonResponse({"detail":"POST required"},status=405)
+    data=parse_body(request) or {}
+    try:
+        customer=Customer.objects.get(id=int(data["customer_id"])); token=CustomerPortalToken.objects.create(token=f"pt_{uuid4().hex}",customer=customer,expires_at=timezone.now()+timedelta(days=int(data.get("days",30))),created_by=request.api_user)
+    except Exception as exc:
+        return JsonResponse({"detail":f"Could not issue portal link: {exc}"},status=400)
+    record_audit(request,"issue portal link","customer",customer.id,customer.company or customer.name)
+    return JsonResponse({"item":{"token":token.token,"customer":customer.company or customer.name,"expires_at":token.expires_at.isoformat(),"portal_path":f"/portal/{token.token}"},"portal":portal_payload(customer,token.token)},status=201)
 
 @csrf_exempt
 @roles_allowed("admin", "manager", "sales")
