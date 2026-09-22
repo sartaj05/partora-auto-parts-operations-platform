@@ -1,4 +1,4 @@
-import { analyticsData, customers, demoAccounts, fitments, governanceState, inventory, mockDashboard, modulesByRole, priceRules, purchaseOrders, quotations, reorderSuggestions, salesFlow, stock, suppliers, warehouseState } from '../mock/data'
+import { analyticsData, customers, demoAccounts, fitments, fulfillmentState, governanceState, inventory, mockDashboard, modulesByRole, priceRules, purchaseOrders, quotations, reorderSuggestions, salesFlow, stock, suppliers, warehouseState } from '../mock/data'
 
 const API_BASE = (import.meta.env.VITE_API_URL || '/api').replace(/\/$/, '')
 const NETWORK_MESSAGE = 'Backend unavailable. Demo mode is active.'
@@ -55,6 +55,7 @@ const fallback = {
   '/warehouses/': () => warehouseState,
   '/reorder/': () => ({ items: reorderSuggestions(), count: reorderSuggestions().length }),
   '/sales-flow/': () => salesFlow,
+  '/fulfillment/': () => fulfillmentState,
   '/customers/': () => ({ items: customers, count: customers.length }),
   '/pricing/': () => ({ items: priceRules }),
   '/analytics/': () => analyticsData(),
@@ -91,6 +92,15 @@ function createMock(path, payload, role) {
   if (path === '/sales-flow/') {
     if(payload.action==='convert_quote'){const q=quotations.find(x=>x.id===Number(payload.quote_id));if(!q)throw new Error('Quote not found');let item=salesFlow.orders.find(x=>x.quote_no===q.quote_no);if(!item){item={id:Date.now(),order_no:`SO-DEMO-${String(Date.now()).slice(-4)}`,quote_no:q.quote_no,customer_name:q.customer_name,customer_company:q.customer_company,total:q.total,status:'confirmed',invoice_no:null,created_at:new Date().toISOString()};salesFlow.orders.unshift(item)}return {item,action:'convert_quote'}}
     if(payload.action==='invoice'){const o=salesFlow.orders.find(x=>x.id===Number(payload.order_id));if(!o)throw new Error('Order not found');let item=salesFlow.invoices.find(x=>x.order_no===o.order_no);if(!item){const d=new Date();d.setDate(d.getDate()+30);item={id:Date.now(),invoice_no:`INV-DEMO-${String(Date.now()).slice(-4)}`,order_no:o.order_no,customer:o.customer_company||o.customer_name,total:o.total,status:'issued',due_date:d.toISOString().slice(0,10)};salesFlow.invoices.unshift(item);o.invoice_no=item.invoice_no}return {item,action:'invoice'}}
+  }
+  if (path === '/fulfillment/') {
+    const order=fulfillmentState.orders.find(x=>x.id===Number(payload.order_id)); if(!order)throw new Error('Order not found')
+    if(payload.action==='reserve'){order.reserved=true;order.fulfillment_status='picking';return {item:order}}
+    if(payload.action==='status'){order.fulfillment_status=payload.status; if(payload.status==='dispatched')order.status='fulfilled'; return {item:order}}
+    if(payload.action==='payment'){
+      let invoice=fulfillmentState.invoices.find(x=>x.order_no===order.order_no); if(!invoice){invoice={id:Date.now(),invoice_no:`INV-DEMO-${String(Date.now()).slice(-4)}`,order_no:order.order_no,customer:order.customer_company||order.customer_name,total:order.total,paid:0,balance:order.total,status:'issued',due_date:new Date(Date.now()+30*86400000).toISOString().slice(0,10)};fulfillmentState.invoices.unshift(invoice);order.invoice_no=invoice.invoice_no}
+      invoice.paid+=Number(payload.amount||0);invoice.balance=Math.max(0,invoice.total-invoice.paid);invoice.status=invoice.balance===0?'paid':'partial';return {item:order,invoice}
+    }
   }
   if (path === '/reorder/') {
     const product=inventory.find(x=>x.sku===String(payload.sku||'').toUpperCase());if(!product)throw new Error('SKU not found')
