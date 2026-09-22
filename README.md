@@ -1,5 +1,7 @@
 # Partora — Auto Parts / Hardware / Electrical Operations Platform
 
+[![CI](https://github.com/sartaj05/partora-auto-parts-operations-platform/actions/workflows/ci.yml/badge.svg)](https://github.com/sartaj05/partora-auto-parts-operations-platform/actions/workflows/ci.yml)
+
 Partora is a demo-ready distributor operations portal built for large inventories, fast quotation work, warehouse control, purchasing, customer accounts and role-based access. The frontend is React + Vite; the backend is **core Django JSON APIs without Django REST Framework**.
 
 ## What is included
