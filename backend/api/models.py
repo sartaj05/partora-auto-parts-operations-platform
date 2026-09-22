@@ -215,6 +215,33 @@ class ReturnRequest(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
+class InventoryCount(models.Model):
+    STATUS_CHOICES = [("draft", "Draft"), ("submitted", "Submitted"), ("approved", "Approved")]
+    reference = models.CharField(max_length=30, unique=True)
+    warehouse = models.ForeignKey(Warehouse, on_delete=models.SET_NULL, null=True, blank=True, related_name="inventory_counts")
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="draft")
+    notes = models.CharField(max_length=300, blank=True)
+    counted_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name="inventory_counts")
+    approved_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name="inventory_count_approvals")
+    created_at = models.DateTimeField(auto_now_add=True)
+    approved_at = models.DateTimeField(null=True, blank=True)
+
+class InventoryCountLine(models.Model):
+    inventory_count = models.ForeignKey(InventoryCount, on_delete=models.CASCADE, related_name="lines")
+    product = models.ForeignKey(Product, on_delete=models.PROTECT, related_name="inventory_count_lines")
+    expected_qty = models.IntegerField()
+    counted_qty = models.IntegerField()
+    variance = models.IntegerField(default=0)
+
+class ProductLot(models.Model):
+    product = models.ForeignKey(Product, on_delete=models.PROTECT, related_name="lots")
+    warehouse = models.ForeignKey(Warehouse, on_delete=models.SET_NULL, null=True, blank=True, related_name="product_lots")
+    lot_no = models.CharField(max_length=80)
+    serial_no = models.CharField(max_length=100, blank=True)
+    quantity = models.PositiveIntegerField(default=1)
+    expiry_date = models.DateField(null=True, blank=True)
+    received_at = models.DateField(default=timezone.localdate)
+
 class Customer(models.Model):
     TYPE_CHOICES = [("retail","Retail"),("dealer","Dealer"),("fleet","Fleet"),("workshop","Workshop")]
     name = models.CharField(max_length=140)
