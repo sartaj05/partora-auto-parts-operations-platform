@@ -209,3 +209,15 @@ class DemandPlanningApiTests(TestCase):
             response = self.client.get(path, **self.auth_headers(self.manager))
             self.assertEqual(response.status_code, 200, path)
             self.assertIn(key, response.json())
+
+    def test_security_ai_delivery_partner_and_predictive_endpoints_are_available(self):
+        for path, key in (
+            ("/api/security/", "users"),
+            ("/api/documents/", "documents"),
+            ("/api/delivery/", "shipments"),
+            ("/api/partner-api/", "keys"),
+            ("/api/predictive-fleet/", "vehicles"),
+        ):
+            response = self.client.get(path, **self.auth_headers(self.manager))
+            self.assertEqual(response.status_code, 200, path)
+            self.assertIn(key, response.json())

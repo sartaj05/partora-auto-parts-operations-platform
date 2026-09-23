@@ -4,9 +4,14 @@ import { createEndpoint, loadEndpoint } from '../api/client'
 import { useAuth } from '../context/AuthContext'
 import CreateModal from '../components/CreateModal'
 import StatusBadge from '../components/StatusBadge'
-import { BarcodePage, VinFitmentPage, MobileWarehousePage, PurchaseOrdersPage, ReceivingPage, WarehouseControlPage, WarehousesPage, ReorderPage, DemandPlanningPage, RFQPage, SalesFlowPage, FulfillmentPage, NotificationsPage, CopilotPage, FinancePage, WarrantyIntelligencePage, ReturnsPage, InventoryControlPage, SupplierIntelligencePage, DealerPortalPage, PortalPage, CustomersPage, PricingPage, CommandCenterPage, GovernancePage, IntegrationsPage, PwaAdminPage, TenancyPage, AutomationPage, FleetPage } from './OperationsPages'
+import { BarcodePage, VinFitmentPage, MobileWarehousePage, PurchaseOrdersPage, ReceivingPage, WarehouseControlPage, WarehousesPage, ReorderPage, DemandPlanningPage, RFQPage, SalesFlowPage, FulfillmentPage, NotificationsPage, CopilotPage, FinancePage, WarrantyIntelligencePage, ReturnsPage, InventoryControlPage, SupplierIntelligencePage, DealerPortalPage, PortalPage, CustomersPage, PricingPage, CommandCenterPage, GovernancePage, IntegrationsPage, PwaAdminPage, TenancyPage, AutomationPage, FleetPage, SecurityPage, DocumentsPage, DeliveryPage, PartnerApiPage, PredictiveFleetPage } from './OperationsPages'
 
 const nav = [
+  ['security','/app/security','Security center','!'],
+  ['documents','/app/documents','AI documents','+'],
+  ['delivery','/app/delivery','Delivery & POD','>'],
+  ['partner_api','/app/partner-api','Partner API','{}'],
+  ['predictive_fleet','/app/predictive-fleet','Fleet intelligence','~'],
   ['receiving','/app/receiving','Receiving & matching','+'],
   ['integrations','/app/integrations','Integrations hub','↗'],
   ['pwa_admin','/app/pwa-admin','PWA devices','▣'],
@@ -203,6 +208,11 @@ export default function DashboardPage(){
     <Route path="tenancy" element={<Allowed module="tenancy"><TenancyPage/></Allowed>}/>
     <Route path="automation" element={<Allowed module="automation"><AutomationPage/></Allowed>}/>
     <Route path="fleet" element={<Allowed module="fleet"><FleetPage/></Allowed>}/>
+    <Route path="security" element={<Allowed module="security"><SecurityPage/></Allowed>}/>
+    <Route path="documents" element={<Allowed module="documents"><DocumentsPage/></Allowed>}/>
+    <Route path="delivery" element={<Allowed module="delivery"><DeliveryPage/></Allowed>}/>
+    <Route path="partner-api" element={<Allowed module="partner_api"><PartnerApiPage/></Allowed>}/>
+    <Route path="predictive-fleet" element={<Allowed module="predictive_fleet"><PredictiveFleetPage/></Allowed>}/>
     <Route path="returns" element={<Allowed module="returns"><ReturnsPage/></Allowed>}/>
     <Route path="inventory-control" element={<Allowed module="inventory_control"><InventoryControlPage/></Allowed>}/>
     <Route path="supplier-performance" element={<Allowed module="supplier_performance"><SupplierIntelligencePage/></Allowed>}/>

@@ -6,7 +6,7 @@ Partora is a demo-ready distributor operations portal built for large inventorie
 
 ## What is included
 
-The original landing/login/dashboard experience plus twenty-three operational modules:
+The original landing/login/dashboard experience plus twenty-eight operational modules:
 
 - Barcode / QR inventory scanning and labels
 - Vehicle compatibility and OEM cross-reference
@@ -31,6 +31,11 @@ The original landing/login/dashboard experience plus twenty-three operational mo
 - Multi-tenant organization, branch and approval permissions
 - Workflow automation rules with execution history
 - Fleet maintenance, service reminders and technician work orders
+- Security and compliance center with MFA, sessions and audit evidence
+- AI invoice and document processing with PO exception review
+- Delivery routes, shipment status and proof of delivery
+- B2B EDI and partner API portal with scoped keys and webhooks
+- Predictive fleet maintenance and component risk forecasting
 
 Client demonstration highlights:
 

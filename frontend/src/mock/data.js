@@ -6,10 +6,10 @@ export const demoAccounts = [
 ]
 
 export const modulesByRole = {
-  admin: ['dashboard', 'inventory', 'quotations', 'suppliers', 'stock', 'barcodes', 'fitments', 'purchase_orders', 'receiving', 'mobile_warehouse', 'warehouses', 'reorder', 'demand_planning', 'rfq', 'sales_flow', 'fulfillment', 'notifications', 'copilot', 'finance', 'warranty_intelligence', 'integrations', 'pwa_admin', 'tenancy', 'automation', 'fleet', 'crm', 'pricing', 'analytics', 'governance'],
-  manager: ['dashboard', 'inventory', 'quotations', 'suppliers', 'stock', 'barcodes', 'fitments', 'purchase_orders', 'receiving', 'mobile_warehouse', 'warehouses', 'reorder', 'demand_planning', 'rfq', 'sales_flow', 'fulfillment', 'notifications', 'copilot', 'finance', 'warranty_intelligence', 'integrations', 'pwa_admin', 'tenancy', 'automation', 'fleet', 'crm', 'pricing', 'analytics', 'governance'],
-  sales: ['dashboard', 'inventory', 'quotations', 'barcodes', 'fitments', 'sales_flow', 'fulfillment', 'notifications', 'copilot', 'finance', 'warranty_intelligence', 'integrations', 'fleet', 'crm', 'pricing', 'analytics', 'governance'],
-  store: ['dashboard', 'inventory', 'stock', 'barcodes', 'fitments', 'purchase_orders', 'receiving', 'mobile_warehouse', 'warehouses', 'reorder', 'demand_planning', 'rfq', 'fulfillment', 'notifications', 'copilot', 'warranty_intelligence', 'pwa_admin', 'automation', 'fleet', 'governance'],
+  admin: ['dashboard', 'inventory', 'quotations', 'suppliers', 'stock', 'barcodes', 'fitments', 'purchase_orders', 'receiving', 'mobile_warehouse', 'warehouses', 'reorder', 'demand_planning', 'rfq', 'sales_flow', 'fulfillment', 'notifications', 'copilot', 'finance', 'warranty_intelligence', 'integrations', 'pwa_admin', 'tenancy', 'automation', 'fleet', 'security', 'documents', 'delivery', 'partner_api', 'predictive_fleet', 'crm', 'pricing', 'analytics', 'governance'],
+  manager: ['dashboard', 'inventory', 'quotations', 'suppliers', 'stock', 'barcodes', 'fitments', 'purchase_orders', 'receiving', 'mobile_warehouse', 'warehouses', 'reorder', 'demand_planning', 'rfq', 'sales_flow', 'fulfillment', 'notifications', 'copilot', 'finance', 'warranty_intelligence', 'integrations', 'pwa_admin', 'tenancy', 'automation', 'fleet', 'security', 'documents', 'delivery', 'partner_api', 'predictive_fleet', 'crm', 'pricing', 'analytics', 'governance'],
+  sales: ['dashboard', 'inventory', 'quotations', 'barcodes', 'fitments', 'sales_flow', 'fulfillment', 'notifications', 'copilot', 'finance', 'warranty_intelligence', 'integrations', 'fleet', 'security', 'delivery', 'partner_api', 'predictive_fleet', 'crm', 'pricing', 'analytics', 'governance'],
+  store: ['dashboard', 'inventory', 'stock', 'barcodes', 'fitments', 'purchase_orders', 'receiving', 'mobile_warehouse', 'warehouses', 'reorder', 'demand_planning', 'rfq', 'fulfillment', 'notifications', 'copilot', 'warranty_intelligence', 'pwa_admin', 'automation', 'fleet', 'security', 'documents', 'delivery', 'predictive_fleet', 'governance'],
 }
 
 export const inventory = [
@@ -289,4 +289,37 @@ export const fleetState = {
   vehicles: [{ id:1, registration:'DL 01 AB 2488', customer:'Rapid Fleet Care', make:'Tata', model:'Ace Gold', year:2022, mileage:68240, next_service:'2026-10-04', status:'due_soon' },{ id:2, registration:'HR 26 CX 9012', customer:'Northline Repairs', make:'Hyundai', model:'i20', year:2023, mileage:42110, next_service:'2026-11-18', status:'healthy' },{ id:3, registration:'DL 04 MK 7761', customer:'Metro Garage', make:'Maruti Suzuki', model:'Swift', year:2020, mileage:88700, next_service:'2026-09-28', status:'overdue' }],
   work_orders: [{ id:1, order_no:'WO-260923-018', registration:'DL 01 AB 2488', customer:'Rapid Fleet Care', technician:'Ravi Kumar', status:'scheduled', due_date:'2026-10-04', parts_value:4850, labor_value:1800, notes:'Replace brake pads and oil filter' },{ id:2, order_no:'WO-260921-014', registration:'DL 04 MK 7761', customer:'Metro Garage', technician:'Sana Iqbal', status:'in_progress', due_date:'2026-09-28', parts_value:7200, labor_value:2200, notes:'Full service and headlamp diagnosis' }],
   reminders: [{ id:1, type:'service_due', title:'Service due in 11 days', detail:'DL 01 AB 2488 · Rapid Fleet Care', status:'queued' },{ id:2, type:'overdue', title:'Service overdue', detail:'DL 04 MK 7761 · Metro Garage', status:'urgent' }],
+}
+
+export const securityState = {
+  summary: { mfa_coverage: 75, active_sessions: 4, open_alerts: 2, audit_events: 1842 },
+  users: [{ id:1, name:'Aarav Admin', role:'admin', mfa:'enabled', last_login:'2026-09-23T09:41:00+05:30', risk:'low' },{ id:2, name:'Meera Manager', role:'manager', mfa:'pending', last_login:'2026-09-23T09:22:00+05:30', risk:'medium' },{ id:3, name:'Rohan Sales', role:'sales', mfa:'enabled', last_login:'2026-09-23T08:55:00+05:30', risk:'low' }],
+  sessions: [{ id:1, user:'Aarav Admin', device:'Chrome · Windows', location:'New Delhi', last_seen:'2026-09-23T09:41:00+05:30', status:'active' },{ id:2, user:'Kabir Store', device:'Android PWA', location:'Gurugram', last_seen:'2026-09-23T09:35:00+05:30', status:'active' },{ id:3, user:'Rohan Sales', device:'Safari · macOS', location:'Noida', last_seen:'2026-09-22T18:20:00+05:30', status:'idle' }],
+  alerts: [{ id:1, type:'mfa', title:'Manager MFA enrollment pending', detail:'Meera Manager should enroll before approving high-value purchases.', status:'open' },{ id:2, type:'session', title:'Idle session exceeds policy', detail:'Rohan Sales session has been idle for 15 hours.', status:'open' }],
+  audit: [{ id:1, actor:'Aarav Admin', action:'role.permission.updated', target:'manager', created_at:'2026-09-23T09:18:00+05:30', result:'success' },{ id:2, actor:'Meera Manager', action:'invoice.approval.reviewed', target:'VE-INV-8821', created_at:'2026-09-23T08:55:00+05:30', result:'success' }],
+}
+
+export const documentState = {
+  summary: { processed_today: 18, pending_review: 2, matched: 14, exception_rate: 11 },
+  documents: [{ id:1, file_name:'VE-INV-8821.pdf', supplier:'VoltEdge Electricals', invoice_no:'VE-INV-8821', gstin:'07AAACV1234A1Z5', total:22050, po_no:'PO-260920-90BD', match_status:'exception', confidence:94, status:'needs_review', uploaded_at:'2026-09-23T09:05:00+05:30', issue:'Invoice quantity includes damaged units' },{ id:2, file_name:'TL-INV-4407.pdf', supplier:'TorqueLine Components', invoice_no:'TL-INV-4407', gstin:'07AABCT6789C1Z2', total:14700, po_no:'PO-260921-A12F', match_status:'matched', confidence:98, status:'approved', uploaded_at:'2026-09-23T08:42:00+05:30', issue:'' }],
+}
+
+export const deliveryState = {
+  summary: { planned: 8, in_transit: 3, delivered_today: 12, exceptions: 1 },
+  routes: [{ id:1, route_no:'RT-260923-04', driver:'Sanjay Mehta', vehicle:'DL 01 AB 2488', stops:6, completed:3, eta:'14:30', status:'in_transit', cost:1850 },{ id:2, route_no:'RT-260923-03', driver:'Pooja Shah', vehicle:'HR 26 CX 9012', stops:4, completed:4, eta:'12:10', status:'delivered', cost:1240 }],
+  shipments: [{ id:1, shipment_no:'SHP-88421', customer:'Northline Repairs', order_no:'SO-260921-41BC', driver:'Sanjay Mehta', status:'in_transit', eta:'2026-09-23 14:30', pod_status:'pending', value:32600 },{ id:2, shipment_no:'SHP-88418', customer:'Metro Garage', order_no:'SO-260920-18DA', driver:'Pooja Shah', status:'delivered', eta:'2026-09-23 12:10', pod_status:'verified', value:18450 }],
+  exceptions: [{ id:1, shipment_no:'SHP-88417', customer:'Rapid Fleet Care', reason:'Customer unavailable at dock', owner:'Dispatch desk', status:'open' }],
+}
+
+export const partnerApiState = {
+  summary: { active_keys: 3, calls_today: 1284, error_rate: 1.8, webhooks: 6 },
+  partners: [{ id:1, name:'Northline Repairs', type:'dealer', status:'connected', last_call:'2026-09-23T09:35:00+05:30', calls:642 },{ id:2, name:'Zoho Books', type:'accounting', status:'connected', last_call:'2026-09-23T09:38:00+05:30', calls:418 },{ id:3, name:'FleetCare Telematics', type:'fleet', status:'sandbox', last_call:'2026-09-22T17:20:00+05:30', calls:224 }],
+  keys: [{ id:1, label:'Northline production', prefix:'pk_live_north_****', scopes:'orders:read, quotes:write', last_used:'2026-09-23T09:35:00+05:30', status:'active' },{ id:2, label:'FleetCare sandbox', prefix:'pk_test_fleet_****', scopes:'vehicles:read', last_used:'2026-09-22T17:20:00+05:30', status:'active' }],
+  webhooks: [{ id:1, event:'order.fulfilled', target:'https://northline.example/hooks/partora', status:'active', deliveries:182 },{ id:2, event:'invoice.exception', target:'https://zoho.example/hooks/partora', status:'retrying', deliveries:14 }],
+}
+
+export const predictiveFleetState = {
+  summary: { vehicles: 42, high_risk: 3, due_30_days: 8, projected_savings: 184000 },
+  vehicles: [{ id:1, registration:'DL 01 AB 2488', customer:'Rapid Fleet Care', model:'Tata Ace Gold', mileage:68240, risk:'high', prediction:'Brake pad wear likely within 420 km', confidence:89, next_service:'2026-10-04', estimated_cost:6800 },{ id:2, registration:'HR 26 CX 9012', customer:'Northline Repairs', model:'Hyundai i20', mileage:42110, risk:'medium', prediction:'Battery replacement likely within 30 days', confidence:76, next_service:'2026-11-18', estimated_cost:5200 },{ id:3, registration:'DL 04 MK 7761', customer:'Metro Garage', model:'Maruti Swift', mileage:88700, risk:'low', prediction:'No immediate component risk', confidence:82, next_service:'2026-09-28', estimated_cost:3100 }],
+  history: [{ id:1, registration:'DL 01 AB 2488', component:'Brake pads', event:'Predicted replacement', status:'planned', due:'420 km', owner:'Ravi Kumar' },{ id:2, registration:'HR 26 CX 9012', component:'Battery', event:'Inspection reminder', status:'queued', due:'30 days', owner:'Sana Iqbal' }],
 }

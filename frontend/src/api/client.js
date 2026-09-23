@@ -1,4 +1,4 @@
-import { analyticsData, automationState, copilotState, customers, demandPlanningData, demandPlanningState, demoAccounts, financeState, fitments, fleetState, fulfillmentState, governanceState, integrationsState, inventory, inventoryControlState, mockDashboard, mobileWarehouseState, modulesByRole, notificationState, portalState, priceRules, pwaState, purchaseOrders, quotations, receivingState, reorderSuggestions, returnsState, rfqState, salesFlow, stock, supplierPerformanceState, suppliers, tenantState, vinVehicles, warehouseState, warrantyState } from '../mock/data'
+import { analyticsData, automationState, copilotState, customers, deliveryState, demandPlanningData, demandPlanningState, demoAccounts, documentState, financeState, fitments, fleetState, fulfillmentState, governanceState, integrationsState, inventory, inventoryControlState, mockDashboard, mobileWarehouseState, modulesByRole, notificationState, partnerApiState, portalState, predictiveFleetState, priceRules, pwaState, purchaseOrders, quotations, receivingState, reorderSuggestions, returnsState, rfqState, salesFlow, securityState, stock, supplierPerformanceState, suppliers, tenantState, vinVehicles, warehouseState, warrantyState } from '../mock/data'
 
 const API_BASE = (import.meta.env.VITE_API_URL || '/api').replace(/\/$/, '')
 const NETWORK_MESSAGE = 'Backend unavailable. Demo mode is active.'
@@ -76,6 +76,11 @@ const fallback = {
   '/tenancy/': () => tenantState,
   '/automation/': () => automationState,
   '/fleet/': () => fleetState,
+  '/security/': () => securityState,
+  '/documents/': () => documentState,
+  '/delivery/': () => deliveryState,
+  '/partner-api/': () => partnerApiState,
+  '/predictive-fleet/': () => predictiveFleetState,
 }
 
 export async function loadEndpoint(path, role) {
@@ -108,6 +113,28 @@ export async function portalAction(token, payload) {
 
 function createMock(path, payload, role) {
   const id = Date.now()
+  if (path === '/security/') {
+    if (payload.action === 'mfa') { const item=securityState.users.find(x=>x.id===Number(payload.id)); if(!item)throw new Error('User not found'); item.mfa='enabled'; item.risk='low'; return {item} }
+    if (payload.action === 'terminate') { const item=securityState.sessions.find(x=>x.id===Number(payload.id)); if(!item)throw new Error('Session not found'); item.status='terminated'; securityState.summary.active_sessions=Math.max(0,securityState.summary.active_sessions-1); return {item} }
+    if (payload.action === 'resolve') { const item=securityState.alerts.find(x=>x.id===Number(payload.id)); if(!item)throw new Error('Security alert not found'); item.status='resolved'; securityState.summary.open_alerts=Math.max(0,securityState.summary.open_alerts-1); return {item} }
+    if (payload.action === 'export') return {item:{format:'csv',filename:`partora-security-${new Date().toISOString().slice(0,10)}.csv`,rows:securityState.audit.length}}
+  }
+  if (path === '/documents/') {
+    if (payload.action === 'upload') { const item={id,name:payload.file_name||'supplier-invoice.pdf',file_name:payload.file_name||'supplier-invoice.pdf',supplier:payload.supplier||'New supplier',invoice_no:payload.invoice_no||`INV-DEMO-${String(id).slice(-4)}`,gstin:payload.gstin||'Pending extraction',total:Number(payload.total||0),po_no:payload.po_no||'Pending match',match_status:'pending',confidence:0,status:'processing',uploaded_at:new Date().toISOString(),issue:''}; documentState.documents.unshift(item); documentState.summary.processed_today+=1; documentState.summary.pending_review+=1; return {item} }
+    const item=documentState.documents.find(x=>x.id===Number(payload.id)); if(!item)throw new Error('Document not found'); if(payload.action==='approve'){item.status='approved';item.match_status='matched';documentState.summary.pending_review=Math.max(0,documentState.summary.pending_review-1)} if(payload.action==='reject'){item.status='rejected';documentState.summary.pending_review=Math.max(0,documentState.summary.pending_review-1)} return {item}
+  }
+  if (path === '/delivery/') {
+    if (payload.action === 'route') { const item={id,route_no:`RT-DEMO-${String(id).slice(-4)}`,driver:payload.driver,vehicle:payload.vehicle,stops:Number(payload.stops||1),completed:0,eta:payload.eta||'15:30',status:'planned',cost:Number(payload.cost||0)}; deliveryState.routes.unshift(item); return {item} }
+    const item=deliveryState.shipments.find(x=>x.id===Number(payload.id)); if(!item)throw new Error('Shipment not found'); if(payload.action==='status')item.status=payload.status||item.status; if(payload.action==='proof'){item.pod_status='verified';item.proof_at=new Date().toISOString()} return {item}
+  }
+  if (path === '/partner-api/') {
+    if (payload.action === 'key') { const item={id,label:payload.label||'New API key',prefix:`pk_${payload.environment||'test'}_${String(id).slice(-6)}_****`,scopes:payload.scopes||'orders:read',last_used:null,status:'active'}; partnerApiState.keys.unshift(item); partnerApiState.summary.active_keys+=1; return {item} }
+    if (payload.action === 'rotate') { const item=partnerApiState.keys.find(x=>x.id===Number(payload.id)); if(!item)throw new Error('API key not found'); item.prefix=`pk_live_rotated_${String(id).slice(-4)}_****`; item.last_used=null; return {item} }
+    if (payload.action === 'webhook') { const item={id,event:payload.event||'order.fulfilled',target:payload.target,status:'active',deliveries:0}; partnerApiState.webhooks.unshift(item); partnerApiState.summary.webhooks+=1; return {item} }
+  }
+  if (path === '/predictive-fleet/') {
+    const item=predictiveFleetState.vehicles.find(x=>x.id===Number(payload.id)); if(!item)throw new Error('Fleet prediction not found'); if(payload.action==='acknowledge'){item.risk='reviewed';predictiveFleetState.summary.high_risk=Math.max(0,predictiveFleetState.summary.high_risk-1);return {item}} if(payload.action==='service'){item.risk='scheduled';item.prediction='Preventive service scheduled';return {item}} return {item}
+  }
   if (path === '/integrations/') {
     if (payload.action === 'connect') { const item={id,name:payload.name||'New connector',type:payload.type||'webhook',status:'connected',last_sync:new Date().toISOString(),records:0}; integrationsState.connections.unshift(item); return {item} }
     if (payload.action === 'test') { const item=integrationsState.connections.find(x=>x.id===Number(payload.id)); if(!item)throw new Error('Integration not found'); item.status='connected'; item.last_sync=new Date().toISOString(); return {item} }

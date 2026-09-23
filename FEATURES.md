@@ -65,6 +65,22 @@ Integrations Hub -> Production Mobile PWA -> Multi-Tenant SaaS -> Workflow Autom
 
 All five screens use the same API-or-local-demo fallback as the rest of the product, so a client walkthrough remains usable when the backend is offline.
 
+## Enterprise trust & intelligence suite
+
+The next client-ready roadmap extends the platform from operations control into enterprise governance, connected commerce and predictive service:
+
+```text
+Security & Compliance -> AI Document Processing -> Delivery & POD -> B2B Partner API -> Predictive Fleet Maintenance
+```
+
+- **Security & Compliance Center** — monitor MFA coverage, active sessions, security alerts, role risk and exportable audit evidence.
+- **AI Invoice & Document Processing** — upload supplier invoices, show extracted GST/total fields, match against POs and approve exceptions.
+- **Delivery Route & Proof of Delivery** — plan routes, assign drivers, track shipments, capture POD and manage delivery exceptions.
+- **B2B EDI & Partner API Portal** — manage scoped API keys, webhooks, partner traffic, sandbox access and integration status.
+- **Predictive Fleet Maintenance** — surface component risk, confidence, service windows, technician actions and projected downtime savings.
+
+Each capability includes a realistic local fallback so client demos remain navigable even when the backend or external provider is unavailable.
+
 ## Role access
 
 - **Admin**: all modules.
