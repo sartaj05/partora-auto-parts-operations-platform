@@ -6,10 +6,10 @@ export const demoAccounts = [
 ]
 
 export const modulesByRole = {
-  admin: ['dashboard', 'inventory', 'quotations', 'suppliers', 'stock', 'barcodes', 'fitments', 'purchase_orders', 'warehouses', 'reorder', 'demand_planning', 'rfq', 'sales_flow', 'fulfillment', 'crm', 'pricing', 'analytics', 'governance'],
-  manager: ['dashboard', 'inventory', 'quotations', 'suppliers', 'stock', 'barcodes', 'fitments', 'purchase_orders', 'warehouses', 'reorder', 'demand_planning', 'rfq', 'sales_flow', 'fulfillment', 'crm', 'pricing', 'analytics', 'governance'],
+  admin: ['dashboard', 'inventory', 'quotations', 'suppliers', 'stock', 'barcodes', 'fitments', 'purchase_orders', 'receiving', 'warehouses', 'reorder', 'demand_planning', 'rfq', 'sales_flow', 'fulfillment', 'crm', 'pricing', 'analytics', 'governance'],
+  manager: ['dashboard', 'inventory', 'quotations', 'suppliers', 'stock', 'barcodes', 'fitments', 'purchase_orders', 'receiving', 'warehouses', 'reorder', 'demand_planning', 'rfq', 'sales_flow', 'fulfillment', 'crm', 'pricing', 'analytics', 'governance'],
   sales: ['dashboard', 'inventory', 'quotations', 'barcodes', 'fitments', 'sales_flow', 'fulfillment', 'crm', 'pricing', 'analytics', 'governance'],
-  store: ['dashboard', 'inventory', 'stock', 'barcodes', 'fitments', 'purchase_orders', 'warehouses', 'reorder', 'demand_planning', 'rfq', 'fulfillment', 'governance'],
+  store: ['dashboard', 'inventory', 'stock', 'barcodes', 'fitments', 'purchase_orders', 'receiving', 'warehouses', 'reorder', 'demand_planning', 'rfq', 'fulfillment', 'governance'],
 }
 
 export const inventory = [
@@ -68,6 +68,15 @@ export const purchaseOrders = [
   { id:1, po_no:'PO-260921-A12F', supplier:'TorqueLine Components', status:'ordered', expected_date:'2026-09-24', total:25200, created_by:'Meera Manager', line_count:3, received_lines:0 },
   { id:2, po_no:'PO-260920-90BD', supplier:'VoltEdge Electricals', status:'partial', expected_date:'2026-09-23', total:44100, created_by:'Aarav Admin', line_count:4, received_lines:2 },
 ]
+
+export const receivingState = {
+  summary: { purchase_orders: 2, awaiting_receipt: 2, damaged_units: 1, invoice_exceptions: 1 },
+  orders: [
+    { id:1, po_no:'PO-260921-A12F', supplier:'TorqueLine Components', status:'ordered', expected_date:'2026-09-24', total:25200, ordered_qty:60, accepted_qty:0, damaged_qty:0, remaining_qty:60, items:[{id:101,sku:'FLT-2210',product:'Engine Oil Filter',ordered_qty:60,received_qty:0,accepted_qty:0,damaged_qty:0,remaining_qty:60,unit_cost:245}], invoices:[] },
+    { id:2, po_no:'PO-260920-90BD', supplier:'VoltEdge Electricals', status:'partial', expected_date:'2026-09-23', total:44100, ordered_qty:100, accepted_qty:48, damaged_qty:2, remaining_qty:50, items:[{id:102,sku:'HLM-H7',product:'H7 LED Headlamp Pair',ordered_qty:100,received_qty:50,accepted_qty:48,damaged_qty:2,remaining_qty:50,unit_cost:441}], invoices:[{id:201,invoice_no:'VE-INV-8821',invoice_date:'2026-09-22',invoice_qty:50,subtotal:22050,tax:0,total:22050,status:'exception',notes:'Invoice quantity includes damaged units',created_by:'Kabir Store'}] },
+  ],
+  invoices: [],
+}
 
 export const warehouseState = {
   warehouses: [

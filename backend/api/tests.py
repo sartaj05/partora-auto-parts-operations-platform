@@ -4,7 +4,7 @@ from django.contrib.auth.models import User
 from django.test import TestCase
 
 from .auth import issue_token
-from .models import DemandHistory, Product, Profile, PurchaseOrder, PurchasePlan, RFQ, RFQOffer, Supplier
+from .models import DemandHistory, GoodsReceipt, Product, Profile, PurchaseOrder, PurchasePlan, RFQ, RFQOffer, Supplier, SupplierInvoice
 
 
 class DemandPlanningApiTests(TestCase):
@@ -114,3 +114,47 @@ class DemandPlanningApiTests(TestCase):
         self.assertEqual(PurchaseOrder.objects.count(), 1)
         self.assertEqual(rfq.offers.get(status="selected").supplier_id, second_supplier.id)
         self.assertEqual(rfq.offers.filter(status="rejected").count(), 1)
+
+    def test_receiving_updates_stock_and_three_way_matches_supplier_invoice(self):
+        po = PurchaseOrder.objects.create(
+            po_no="PO-TEST-001", supplier=self.supplier, status="ordered", total=1000,
+            created_by=self.manager,
+        )
+        from .models import PurchaseOrderItem
+        line = PurchaseOrderItem.objects.create(purchase_order=po, product=self.product, quantity=10, unit_cost=100)
+
+        receipt_response = self.client.post(
+            "/api/receiving/",
+            data={"action": "receive", "po_id": po.id, "lines": [{"item_id": line.id, "accepted_qty": 8, "damaged_qty": 1}]},
+            content_type="application/json",
+            **self.auth_headers(self.store),
+        )
+
+        self.assertEqual(receipt_response.status_code, 201)
+        po.refresh_from_db(); self.product.refresh_from_db()
+        self.assertEqual(po.status, "partial")
+        self.assertEqual(po.items.get().received_qty, 9)
+        self.assertEqual(self.product.stock_qty, 10)
+        self.assertEqual(GoodsReceipt.objects.count(), 1)
+
+        invoice_response = self.client.post(
+            "/api/receiving/",
+            data={"action": "invoice", "po_id": po.id, "invoice_no": "SUP-INV-001", "invoice_qty": 8, "subtotal": 800, "total": 800},
+            content_type="application/json",
+            **self.auth_headers(self.store),
+        )
+
+        self.assertEqual(invoice_response.status_code, 201)
+        invoice = SupplierInvoice.objects.get(invoice_no="SUP-INV-001")
+        self.assertEqual(invoice.status, "matched")
+
+        approve_response = self.client.post(
+            "/api/receiving/",
+            data={"action": "approve", "invoice_id": invoice.id},
+            content_type="application/json",
+            **self.auth_headers(self.manager),
+        )
+
+        self.assertEqual(approve_response.status_code, 200)
+        invoice.refresh_from_db()
+        self.assertEqual(invoice.status, "approved")

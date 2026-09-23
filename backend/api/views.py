@@ -10,14 +10,14 @@ from django.http import JsonResponse
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 from .auth import api_login_required, issue_token, roles_allowed
-from .models import Product, Quotation, StockMovement, Supplier, VehicleFitment, PurchaseOrder, PurchaseOrderItem, Warehouse, WarehouseStock, StockTransfer, SalesOrder, SalesOrderItem, Invoice, Payment, ReturnRequest, InventoryCount, InventoryCountLine, ProductLot, SupplierPriceSnapshot, Customer, CustomerPortalToken, PriceRule, Notification, ApprovalRequest, AuditLog, DemandHistory, PurchasePlan, RFQ, RFQOffer
+from .models import Product, Quotation, StockMovement, Supplier, VehicleFitment, PurchaseOrder, PurchaseOrderItem, GoodsReceipt, GoodsReceiptLine, SupplierInvoice, Warehouse, WarehouseStock, StockTransfer, SalesOrder, SalesOrderItem, Invoice, Payment, ReturnRequest, InventoryCount, InventoryCountLine, ProductLot, SupplierPriceSnapshot, Customer, CustomerPortalToken, PriceRule, Notification, ApprovalRequest, AuditLog, DemandHistory, PurchasePlan, RFQ, RFQOffer
 from .serializers import product_dict, quotation_dict, supplier_dict
 
 ROLE_MODULES = {
-    "admin": ["dashboard", "inventory", "quotations", "suppliers", "stock", "barcodes", "fitments", "purchase_orders", "warehouses", "reorder", "demand_planning", "rfq", "sales_flow", "fulfillment", "returns", "inventory_control", "supplier_performance", "portal", "crm", "pricing", "analytics", "governance"],
-    "manager": ["dashboard", "inventory", "quotations", "suppliers", "stock", "barcodes", "fitments", "purchase_orders", "warehouses", "reorder", "demand_planning", "rfq", "sales_flow", "fulfillment", "returns", "inventory_control", "supplier_performance", "portal", "crm", "pricing", "analytics", "governance"],
+    "admin": ["dashboard", "inventory", "quotations", "suppliers", "stock", "barcodes", "fitments", "purchase_orders", "receiving", "warehouses", "reorder", "demand_planning", "rfq", "sales_flow", "fulfillment", "returns", "inventory_control", "supplier_performance", "portal", "crm", "pricing", "analytics", "governance"],
+    "manager": ["dashboard", "inventory", "quotations", "suppliers", "stock", "barcodes", "fitments", "purchase_orders", "receiving", "warehouses", "reorder", "demand_planning", "rfq", "sales_flow", "fulfillment", "returns", "inventory_control", "supplier_performance", "portal", "crm", "pricing", "analytics", "governance"],
     "sales": ["dashboard", "inventory", "quotations", "barcodes", "fitments", "sales_flow", "fulfillment", "returns", "portal", "crm", "pricing", "analytics", "governance"],
-    "store": ["dashboard", "inventory", "stock", "barcodes", "fitments", "purchase_orders", "warehouses", "reorder", "demand_planning", "rfq", "sales_flow", "fulfillment", "returns", "inventory_control", "supplier_performance", "governance"],
+    "store": ["dashboard", "inventory", "stock", "barcodes", "fitments", "purchase_orders", "receiving", "warehouses", "reorder", "demand_planning", "rfq", "sales_flow", "fulfillment", "returns", "inventory_control", "supplier_performance", "governance"],
 }
 
 def parse_body(request):
@@ -287,6 +287,69 @@ def purchase_orders_view(request):
             return JsonResponse({"detail":f"Could not create purchase order: {exc}"},status=400)
         return JsonResponse({"item":{"id":po.id,"po_no":po.po_no,"supplier":po.supplier.name,"status":po.status,"expected_date":po.expected_date.isoformat() if po.expected_date else None,"total":float(po.total),"created_by":request.api_user.get_full_name() or request.api_user.username,"line_count":1,"received_lines":0}},status=201)
     return JsonResponse({"detail":"Method not allowed"},status=405)
+
+def receiving_po_dict(po):
+    items=[]
+    accepted_total=0; damaged_total=0; ordered_total=0
+    for line in po.items.select_related("product").all():
+        accepted=GoodsReceiptLine.objects.filter(purchase_order_item=line).aggregate(total=Sum("accepted_qty"))["total"] or 0
+        damaged=GoodsReceiptLine.objects.filter(purchase_order_item=line).aggregate(total=Sum("damaged_qty"))["total"] or 0
+        ordered_total += line.quantity; accepted_total += accepted; damaged_total += damaged
+        items.append({"id":line.id,"sku":line.product.sku,"product":line.product.name,"ordered_qty":line.quantity,"received_qty":line.received_qty,"accepted_qty":accepted,"damaged_qty":damaged,"remaining_qty":max(0,line.quantity-line.received_qty),"unit_cost":float(line.unit_cost)})
+    invoices=[{"id":invoice.id,"invoice_no":invoice.invoice_no,"invoice_date":invoice.invoice_date.isoformat() if invoice.invoice_date else None,"invoice_qty":invoice.invoice_qty,"subtotal":float(invoice.subtotal),"tax":float(invoice.tax),"total":float(invoice.total),"status":invoice.status,"notes":invoice.notes,"created_by":(invoice.created_by.get_full_name() or invoice.created_by.username) if invoice.created_by else "System"} for invoice in po.supplier_invoices.select_related("created_by").all()]
+    return {"id":po.id,"po_no":po.po_no,"supplier":po.supplier.name,"status":po.status,"expected_date":po.expected_date.isoformat() if po.expected_date else None,"total":float(po.total),"line_count":len(items),"ordered_qty":ordered_total,"accepted_qty":accepted_total,"damaged_qty":damaged_total,"remaining_qty":max(0,ordered_total-accepted_total-damaged_total),"items":items,"invoices":invoices}
+
+@csrf_exempt
+@roles_allowed("admin", "manager", "store")
+def receiving_view(request):
+    if request.method == "GET":
+        qs=PurchaseOrder.objects.select_related("supplier").prefetch_related("items__product").order_by("-created_at")
+        orders=[receiving_po_dict(po) for po in qs[:100]]
+        invoices=[invoice for po in orders for invoice in po["invoices"]]
+        return JsonResponse({"orders":orders,"invoices":invoices,"summary":{"purchase_orders":len(orders),"awaiting_receipt":sum(1 for po in orders if po["remaining_qty"]>0 and po["status"] in {"approved","ordered","partial"}),"damaged_units":sum(po["damaged_qty"] for po in orders),"invoice_exceptions":sum(1 for invoice in invoices if invoice["status"]=="exception")}})
+    if request.method != "POST": return JsonResponse({"detail":"Method not allowed"},status=405)
+    data=parse_body(request) or {}; action=str(data.get("action","receive"))
+    try:
+        if action == "receive":
+            with transaction.atomic():
+                po=PurchaseOrder.objects.select_related("supplier").prefetch_related("items__product").select_for_update().get(id=int(data["po_id"]))
+                requested=data.get("lines") or [{"item_id":line.id,"accepted_qty":max(0,line.quantity-line.received_qty),"damaged_qty":0} for line in po.items.all() if line.quantity>line.received_qty]
+                if not requested: raise ValueError("This purchase order has no remaining quantity")
+                receipt=GoodsReceipt.objects.create(receipt_no=f"GRN-{timezone.now():%y%m%d}-{uuid4().hex[:4].upper()}",purchase_order=po,notes=str(data.get("notes",""))[:300],received_by=request.api_user)
+                posted=0
+                for raw in requested:
+                    line=PurchaseOrderItem.objects.select_related("product").select_for_update().get(id=int(raw["item_id"]),purchase_order=po)
+                    accepted=max(0,int(raw.get("accepted_qty",0) or 0)); damaged=max(0,int(raw.get("damaged_qty",0) or 0)); total_qty=accepted+damaged; remaining=max(0,line.quantity-line.received_qty)
+                    if total_qty<=0: continue
+                    if total_qty>remaining: raise ValueError(f"Receipt exceeds remaining quantity for {line.product.sku}")
+                    GoodsReceiptLine.objects.create(receipt=receipt,purchase_order_item=line,accepted_qty=accepted,damaged_qty=damaged,notes=str(raw.get("notes",""))[:240])
+                    line.received_qty += total_qty; line.save(update_fields=["received_qty"])
+                    if accepted:
+                        line.product.stock_qty += accepted; line.product.save(update_fields=["stock_qty","updated_at"])
+                        StockMovement.objects.create(product=line.product,movement_type="in",quantity=accepted,reference=receipt.receipt_no)
+                    posted += total_qty
+                if not posted: raise ValueError("Enter an accepted or damaged quantity")
+                complete=all(line.received_qty>=line.quantity for line in po.items.all())
+                po.status="received" if complete else "partial"; po.received_at=timezone.now(); po.save(update_fields=["status","received_at"])
+            record_audit(request,"post goods receipt","goods receipt",receipt.id,receipt.receipt_no)
+            return JsonResponse({"item":receiving_po_dict(po)},status=201)
+        if action == "invoice":
+            po=PurchaseOrder.objects.select_related("supplier").prefetch_related("items__product").get(id=int(data["po_id"]))
+            invoice_no=str(data["invoice_no"]).strip()
+            if not invoice_no: raise ValueError("Supplier invoice number is required")
+            invoice_qty=max(0,int(data.get("invoice_qty",0) or 0)); total=Decimal(str(data.get("total",0) or 0)); tax=Decimal(str(data.get("tax",0) or 0)); subtotal=Decimal(str(data.get("subtotal",total-tax) or 0))
+            accepted=sum(GoodsReceiptLine.objects.filter(purchase_order_item__purchase_order=po).values_list("accepted_qty",flat=True)); ordered=sum(line.quantity for line in po.items.all()); unit_total=po.total / ordered if ordered else Decimal("0"); expected_total=(unit_total*invoice_qty).quantize(Decimal("0.01")); status="matched" if invoice_qty>0 and invoice_qty<=accepted and abs(total-expected_total)<=Decimal("0.01") else "exception"
+            invoice=SupplierInvoice.objects.create(invoice_no=invoice_no,purchase_order=po,supplier=po.supplier,invoice_date=date.fromisoformat(str(data["invoice_date"])) if data.get("invoice_date") else timezone.localdate(),invoice_qty=invoice_qty,subtotal=subtotal,tax=tax,total=total,status=status,notes=str(data.get("notes",""))[:300],created_by=request.api_user)
+            record_audit(request,"record supplier invoice","supplier invoice",invoice.id,f"{invoice.invoice_no} ({invoice.status})")
+            return JsonResponse({"item":receiving_po_dict(po),"invoice":{"id":invoice.id,"invoice_no":invoice.invoice_no,"status":invoice.status}},status=201)
+        if action == "approve":
+            if request.api_user.profile.role not in {"admin","manager"}: return JsonResponse({"detail":"Only admin or manager can approve supplier invoices"},status=403)
+            invoice=SupplierInvoice.objects.get(id=int(data["invoice_id"])); invoice.status="approved"; invoice.approved_by=request.api_user; invoice.approved_at=timezone.now(); invoice.save(update_fields=["status","approved_by","approved_at"])
+            record_audit(request,"approve supplier invoice","supplier invoice",invoice.id,invoice.invoice_no)
+            return JsonResponse({"item":{"id":invoice.id,"invoice_no":invoice.invoice_no,"status":invoice.status}})
+        raise ValueError("Unknown receiving action")
+    except Exception as exc:
+        return JsonResponse({"detail":f"Could not complete receiving action: {exc}"},status=400)
 
 @csrf_exempt
 @roles_allowed("admin", "manager", "store")

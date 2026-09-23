@@ -124,6 +124,48 @@ class PurchaseOrderItem(models.Model):
     unit_cost = models.DecimalField(max_digits=12, decimal_places=2)
     received_qty = models.PositiveIntegerField(default=0)
 
+
+class GoodsReceipt(models.Model):
+    STATUS_CHOICES = [("posted", "Posted"), ("cancelled", "Cancelled")]
+    receipt_no = models.CharField(max_length=30, unique=True)
+    purchase_order = models.ForeignKey(PurchaseOrder, on_delete=models.PROTECT, related_name="goods_receipts")
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="posted")
+    notes = models.CharField(max_length=300, blank=True)
+    received_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name="goods_receipts")
+    received_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-received_at"]
+
+
+class GoodsReceiptLine(models.Model):
+    receipt = models.ForeignKey(GoodsReceipt, on_delete=models.CASCADE, related_name="lines")
+    purchase_order_item = models.ForeignKey(PurchaseOrderItem, on_delete=models.PROTECT, related_name="receipt_lines")
+    accepted_qty = models.PositiveIntegerField(default=0)
+    damaged_qty = models.PositiveIntegerField(default=0)
+    notes = models.CharField(max_length=240, blank=True)
+
+
+class SupplierInvoice(models.Model):
+    STATUS_CHOICES = [("exception", "Needs review"), ("matched", "Matched"), ("approved", "Approved"), ("rejected", "Rejected")]
+    invoice_no = models.CharField(max_length=40, unique=True)
+    purchase_order = models.ForeignKey(PurchaseOrder, on_delete=models.PROTECT, related_name="supplier_invoices")
+    supplier = models.ForeignKey(Supplier, on_delete=models.PROTECT, related_name="supplier_invoices")
+    invoice_date = models.DateField(null=True, blank=True)
+    invoice_qty = models.PositiveIntegerField(default=0)
+    subtotal = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    tax = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    total = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="exception")
+    notes = models.CharField(max_length=300, blank=True)
+    created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name="supplier_invoices_created")
+    approved_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name="supplier_invoices_approved")
+    created_at = models.DateTimeField(auto_now_add=True)
+    approved_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
 class Warehouse(models.Model):
     code = models.CharField(max_length=20, unique=True)
     name = models.CharField(max_length=120)

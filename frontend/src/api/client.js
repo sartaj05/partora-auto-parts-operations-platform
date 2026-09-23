@@ -1,4 +1,4 @@
-import { analyticsData, customers, demandPlanningData, demandPlanningState, demoAccounts, fitments, fulfillmentState, governanceState, inventory, inventoryControlState, mockDashboard, modulesByRole, portalState, priceRules, purchaseOrders, quotations, reorderSuggestions, returnsState, rfqState, salesFlow, stock, supplierPerformanceState, suppliers, warehouseState } from '../mock/data'
+import { analyticsData, customers, demandPlanningData, demandPlanningState, demoAccounts, fitments, fulfillmentState, governanceState, inventory, inventoryControlState, mockDashboard, modulesByRole, portalState, priceRules, purchaseOrders, quotations, receivingState, reorderSuggestions, returnsState, rfqState, salesFlow, stock, supplierPerformanceState, suppliers, warehouseState } from '../mock/data'
 
 const API_BASE = (import.meta.env.VITE_API_URL || '/api').replace(/\/$/, '')
 const NETWORK_MESSAGE = 'Backend unavailable. Demo mode is active.'
@@ -52,6 +52,7 @@ const fallback = {
   '/barcodes/': () => ({ items: inventory.filter(x => x.barcode) }),
   '/fitments/': () => ({ items: fitments, count: fitments.length }),
   '/purchase-orders/': () => ({ items: purchaseOrders, count: purchaseOrders.length }),
+  '/receiving/': () => receivingState,
   '/warehouses/': () => warehouseState,
   '/reorder/': () => ({ items: reorderSuggestions(), count: reorderSuggestions().length }),
   '/demand-planning/': () => demandPlanningData(),
@@ -187,6 +188,18 @@ function createMock(path, payload, role) {
     if(payload.action==='receive'){const po=purchaseOrders.find(x=>x.id===Number(payload.id));if(!po)throw new Error('PO not found');po.status='received';po.received_lines=po.line_count;return {item:po}}
     const product=inventory.find(x=>x.sku.toUpperCase()===String(payload.sku||'').toUpperCase());if(!product)throw new Error('SKU not found')
     const item={id:Date.now(),po_no:`PO-DEMO-${String(Date.now()).slice(-4)}`,supplier:payload.supplier,status:payload.status||'draft',expected_date:payload.expected_date||null,total:Number(payload.quantity||1)*Number(payload.unit_cost||product.price),created_by:'Demo User',line_count:1,received_lines:0};purchaseOrders.unshift(item);return {item}
+  }
+  if (path === '/receiving/') {
+    const order=receivingState.orders.find(x=>x.id===Number(payload.po_id)); if(!order)throw new Error('Purchase order not found')
+    if(payload.action==='receive'){
+      const line=order.items.find(x=>x.id===Number(payload.lines?.[0]?.item_id)); if(!line)throw new Error('Purchase order line not found')
+      const accepted=Number(payload.lines[0].accepted_qty||0), damaged=Number(payload.lines[0].damaged_qty||0); if(accepted+damaged>line.remaining_qty)throw new Error('Receipt exceeds remaining quantity')
+      line.accepted_qty+=accepted; line.damaged_qty+=damaged; line.received_qty+=accepted+damaged; line.remaining_qty=line.ordered_qty-line.received_qty; order.accepted_qty+=accepted; order.damaged_qty+=damaged; order.remaining_qty-=accepted+damaged; order.status=order.remaining_qty===0?'received':'partial'; const product=inventory.find(x=>x.sku===line.sku); if(product){product.stock_qty+=accepted;product.stock_status=product.stock_qty<=product.reorder_level?'low':'healthy'} return {item:order}
+    }
+    if(payload.action==='invoice'){
+      const total=Number(payload.total||0), qty=Number(payload.invoice_qty||0), expected=order.ordered_qty?order.total/order.ordered_qty*qty:0; const invoice={id:Date.now(),invoice_no:payload.invoice_no,invoice_date:payload.invoice_date||new Date().toISOString().slice(0,10),invoice_qty:qty,subtotal:Number(payload.subtotal||total),tax:Number(payload.tax||0),total,status:qty>0&&qty<=order.accepted_qty&&Math.abs(total-expected)<.01?'matched':'exception',notes:payload.notes||'',created_by:'Demo User'}; order.invoices.unshift(invoice); return {item:order,invoice}
+    }
+    if(payload.action==='approve'){const invoice=order.invoices.find(x=>x.id===Number(payload.invoice_id));if(!invoice)throw new Error('Invoice not found');invoice.status='approved';return {item:{id:invoice.id,invoice_no:invoice.invoice_no,status:invoice.status}}}
   }
   if (path === '/fitments/') {
     const product = inventory.find(x => x.sku.toUpperCase() === String(payload.sku || '').toUpperCase())

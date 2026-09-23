@@ -16,7 +16,8 @@ The repository is intentionally built in reviewable feature commits. The ten req
 | `2cbe53f` | Notifications, approvals and audit trail |
 | `5f97ea6` | Complete demo seed data for all enhanced workflows |
 | `ac401f4` | Demand forecasting, safety stock and approval-ready purchase planning |
-| `af32a8f` | Supplier RFQ, quote scoring and manager-approved offer selection |
+| `1c0e0b7` | Supplier RFQ, quote scoring and manager-approved offer selection |
+| `4cac125` | Goods receipt, damaged-stock handling and three-way supplier invoice matching |
 
 The earlier repository history is also preserved, including the original landing page, login, role-aware dashboard, Django API foundation, offline demo mode and deployment setup.
 

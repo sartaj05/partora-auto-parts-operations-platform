@@ -4,9 +4,10 @@ import { createEndpoint, loadEndpoint } from '../api/client'
 import { useAuth } from '../context/AuthContext'
 import CreateModal from '../components/CreateModal'
 import StatusBadge from '../components/StatusBadge'
-import { BarcodePage, FitmentsPage, PurchaseOrdersPage, WarehousesPage, ReorderPage, DemandPlanningPage, RFQPage, SalesFlowPage, FulfillmentPage, ReturnsPage, InventoryControlPage, SupplierPerformancePage, PortalPage, CustomersPage, PricingPage, AnalyticsPage, GovernancePage } from './OperationsPages'
+import { BarcodePage, FitmentsPage, PurchaseOrdersPage, ReceivingPage, WarehousesPage, ReorderPage, DemandPlanningPage, RFQPage, SalesFlowPage, FulfillmentPage, ReturnsPage, InventoryControlPage, SupplierPerformancePage, PortalPage, CustomersPage, PricingPage, AnalyticsPage, GovernancePage } from './OperationsPages'
 
 const nav = [
+  ['receiving','/app/receiving','Receiving & matching','+'],
   ['dashboard','/app','Overview','⌂'],
   ['inventory','/app/inventory','Inventory','⌕'],
   ['quotations','/app/quotations','Quotations','▤'],
@@ -175,6 +176,7 @@ export default function DashboardPage(){
     <Route path="barcodes" element={<Allowed module="barcodes"><BarcodePage/></Allowed>}/>
     <Route path="fitments" element={<Allowed module="fitments"><FitmentsPage/></Allowed>}/>
     <Route path="purchase-orders" element={<Allowed module="purchase_orders"><PurchaseOrdersPage/></Allowed>}/>
+    <Route path="receiving" element={<Allowed module="receiving"><ReceivingPage/></Allowed>}/>
     <Route path="warehouses" element={<Allowed module="warehouses"><WarehousesPage/></Allowed>}/>
     <Route path="reorder" element={<Allowed module="reorder"><ReorderPage/></Allowed>}/>
     <Route path="demand-planning" element={<Allowed module="demand_planning"><DemandPlanningPage/></Allowed>}/>
