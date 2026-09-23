@@ -4,7 +4,7 @@ from django.core.management.base import BaseCommand
 from django.utils import timezone
 from api.models import (
     ApprovalRequest, AuditLog, Customer, Invoice, Notification, PriceRule, Product,
-    Profile, PurchaseOrder, PurchaseOrderItem, Quotation, SalesOrder, StockMovement, DemandHistory,
+    Profile, PurchaseOrder, PurchaseOrderItem, Quotation, SalesOrder, StockMovement, DemandHistory, RFQ, RFQOffer,
     StockTransfer, Supplier, VehicleFitment, Warehouse, WarehouseStock,
 )
 
@@ -79,6 +79,10 @@ class Command(BaseCommand):
         for sku, quantities in demand_rows.items():
             for days_ago, quantity in zip((60, 30, 0), quantities):
                 DemandHistory.objects.update_or_create(product=products[sku], warehouse=None, period_start=date.today() - timedelta(days=days_ago), defaults={"quantity": quantity, "source": "sales"})
+
+        rfq, _ = RFQ.objects.get_or_create(rfq_no="RFQ-260923-FLT", defaults={"product": products["FLT-2210"], "quantity": 60, "needed_by": date.today() + timedelta(days=7), "status": "quoted", "notes": "Compare preferred suppliers before replenishing the oil-filter demand plan.", "requested_by": users["store"]})
+        RFQOffer.objects.update_or_create(rfq=rfq, supplier=suppliers["TorqueLine Components"], defaults={"unit_price": 245, "lead_time_days": 3, "moq": 20, "available_qty": 100, "payment_terms": "Net 30", "status": "received", "notes": "Standard replenishment quote", "responded_at": timezone.now()})
+        RFQOffer.objects.update_or_create(rfq=rfq, supplier=suppliers["VoltEdge Electricals"], defaults={"unit_price": 255, "lead_time_days": 2, "moq": 25, "available_qty": 55, "payment_terms": "Net 15", "status": "received", "notes": "Faster delivery, smaller credit window", "responded_at": timezone.now()})
 
         quote_rows = [
             ("QT-260921-104", "Anil Verma", "Metro Garage", 18450, "sent", 7, "sales"),

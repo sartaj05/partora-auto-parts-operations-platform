@@ -6,10 +6,10 @@ export const demoAccounts = [
 ]
 
 export const modulesByRole = {
-  admin: ['dashboard', 'inventory', 'quotations', 'suppliers', 'stock', 'barcodes', 'fitments', 'purchase_orders', 'warehouses', 'reorder', 'demand_planning', 'sales_flow', 'fulfillment', 'crm', 'pricing', 'analytics', 'governance'],
-  manager: ['dashboard', 'inventory', 'quotations', 'suppliers', 'stock', 'barcodes', 'fitments', 'purchase_orders', 'warehouses', 'reorder', 'demand_planning', 'sales_flow', 'fulfillment', 'crm', 'pricing', 'analytics', 'governance'],
+  admin: ['dashboard', 'inventory', 'quotations', 'suppliers', 'stock', 'barcodes', 'fitments', 'purchase_orders', 'warehouses', 'reorder', 'demand_planning', 'rfq', 'sales_flow', 'fulfillment', 'crm', 'pricing', 'analytics', 'governance'],
+  manager: ['dashboard', 'inventory', 'quotations', 'suppliers', 'stock', 'barcodes', 'fitments', 'purchase_orders', 'warehouses', 'reorder', 'demand_planning', 'rfq', 'sales_flow', 'fulfillment', 'crm', 'pricing', 'analytics', 'governance'],
   sales: ['dashboard', 'inventory', 'quotations', 'barcodes', 'fitments', 'sales_flow', 'fulfillment', 'crm', 'pricing', 'analytics', 'governance'],
-  store: ['dashboard', 'inventory', 'stock', 'barcodes', 'fitments', 'purchase_orders', 'warehouses', 'reorder', 'demand_planning', 'fulfillment', 'governance'],
+  store: ['dashboard', 'inventory', 'stock', 'barcodes', 'fitments', 'purchase_orders', 'warehouses', 'reorder', 'demand_planning', 'rfq', 'fulfillment', 'governance'],
 }
 
 export const inventory = [
@@ -137,6 +137,16 @@ export function demandPlanningData() {
   const totals = {}
   items.filter(x => x.recommended_qty).forEach(item => { const group = totals[item.supplier] ||= { supplier:item.supplier, recommended_qty:0, estimated_cost:0, sku_count:0 }; group.recommended_qty += item.recommended_qty; group.estimated_cost += item.estimated_cost; group.sku_count += 1 })
   return { window_days:90, horizon_days:30, generated_at:new Date().toISOString(), summary:{ at_risk:items.filter(x => x.recommended_qty).length, stockout_soon:items.filter(x => x.stockout_days !== null && x.stockout_days <= x.lead_time_days).length, estimated_cost:items.reduce((sum,x) => sum + x.estimated_cost, 0), forecasted_skus:items.length }, items, supplier_totals:Object.values(totals) }
+}
+
+export const rfqState = {
+  items: [{
+    id:1, rfq_no:'RFQ-260923-FLT', sku:'FLT-2210', product:'Engine Oil Filter', quantity:60, needed_by:'2026-09-30', status:'quoted', purchase_plan_id:null, notes:'Compare preferred suppliers before replenishing the oil-filter demand plan.', requested_by:'Kabir Store', created_at:'2026-09-23T09:15:00+05:30', recommended_offer_id:1, recommended_supplier:'TorqueLine Components', recommended_score:93.4,
+    offers:[
+      { id:1, supplier:'TorqueLine Components', supplier_rating:4.8, unit_price:245, total:14700, lead_time_days:3, moq:20, available_qty:100, payment_terms:'Net 30', status:'received', notes:'Standard replenishment quote', score:93.4, is_recommended:true },
+      { id:2, supplier:'VoltEdge Electricals', supplier_rating:4.7, unit_price:255, total:15300, lead_time_days:2, moq:25, available_qty:55, payment_terms:'Net 15', status:'received', notes:'Faster delivery, smaller credit window', score:86.1, is_recommended:false },
+    ],
+  }],
 }
 
 export const portalState = { tokens: {} }

@@ -10,14 +10,14 @@ from django.http import JsonResponse
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 from .auth import api_login_required, issue_token, roles_allowed
-from .models import Product, Quotation, StockMovement, Supplier, VehicleFitment, PurchaseOrder, PurchaseOrderItem, Warehouse, WarehouseStock, StockTransfer, SalesOrder, SalesOrderItem, Invoice, Payment, ReturnRequest, InventoryCount, InventoryCountLine, ProductLot, SupplierPriceSnapshot, Customer, CustomerPortalToken, PriceRule, Notification, ApprovalRequest, AuditLog, DemandHistory, PurchasePlan
+from .models import Product, Quotation, StockMovement, Supplier, VehicleFitment, PurchaseOrder, PurchaseOrderItem, Warehouse, WarehouseStock, StockTransfer, SalesOrder, SalesOrderItem, Invoice, Payment, ReturnRequest, InventoryCount, InventoryCountLine, ProductLot, SupplierPriceSnapshot, Customer, CustomerPortalToken, PriceRule, Notification, ApprovalRequest, AuditLog, DemandHistory, PurchasePlan, RFQ, RFQOffer
 from .serializers import product_dict, quotation_dict, supplier_dict
 
 ROLE_MODULES = {
-    "admin": ["dashboard", "inventory", "quotations", "suppliers", "stock", "barcodes", "fitments", "purchase_orders", "warehouses", "reorder", "demand_planning", "sales_flow", "fulfillment", "returns", "inventory_control", "supplier_performance", "portal", "crm", "pricing", "analytics", "governance"],
-    "manager": ["dashboard", "inventory", "quotations", "suppliers", "stock", "barcodes", "fitments", "purchase_orders", "warehouses", "reorder", "demand_planning", "sales_flow", "fulfillment", "returns", "inventory_control", "supplier_performance", "portal", "crm", "pricing", "analytics", "governance"],
+    "admin": ["dashboard", "inventory", "quotations", "suppliers", "stock", "barcodes", "fitments", "purchase_orders", "warehouses", "reorder", "demand_planning", "rfq", "sales_flow", "fulfillment", "returns", "inventory_control", "supplier_performance", "portal", "crm", "pricing", "analytics", "governance"],
+    "manager": ["dashboard", "inventory", "quotations", "suppliers", "stock", "barcodes", "fitments", "purchase_orders", "warehouses", "reorder", "demand_planning", "rfq", "sales_flow", "fulfillment", "returns", "inventory_control", "supplier_performance", "portal", "crm", "pricing", "analytics", "governance"],
     "sales": ["dashboard", "inventory", "quotations", "barcodes", "fitments", "sales_flow", "fulfillment", "returns", "portal", "crm", "pricing", "analytics", "governance"],
-    "store": ["dashboard", "inventory", "stock", "barcodes", "fitments", "purchase_orders", "warehouses", "reorder", "demand_planning", "sales_flow", "fulfillment", "returns", "inventory_control", "supplier_performance", "governance"],
+    "store": ["dashboard", "inventory", "stock", "barcodes", "fitments", "purchase_orders", "warehouses", "reorder", "demand_planning", "rfq", "sales_flow", "fulfillment", "returns", "inventory_control", "supplier_performance", "governance"],
 }
 
 def parse_body(request):
@@ -694,6 +694,158 @@ def demand_planning_view(request):
         record_audit(request, "approve purchase plan", "purchase plan", plan.id, f"{plan.product.sku} / {po.po_no}")
         return JsonResponse({"item": _purchase_plan_item(plan), "po_no": po.po_no})
     return JsonResponse({"detail": "Unknown demand planning action"}, status=400)
+
+
+def _rfq_detail(rfq):
+    offers = list(rfq.offers.select_related("supplier").all())
+    quoted = [offer for offer in offers if offer.status != "pending" and offer.unit_price > 0]
+    min_total = min((Decimal(offer.unit_price) * rfq.quantity for offer in quoted), default=Decimal("0"))
+    min_lead = min((offer.lead_time_days or offer.supplier.lead_time_days for offer in quoted), default=0)
+    offer_items = []
+    for offer in offers:
+        lead_time = offer.lead_time_days or offer.supplier.lead_time_days
+        total = Decimal(offer.unit_price) * rfq.quantity
+        score = 0
+        if offer in quoted:
+            price_score = float(min_total / total * 60) if total else 0
+            lead_score = (min_lead / lead_time * 20) if lead_time and min_lead else 0
+            availability_score = min(offer.available_qty / max(rfq.quantity, 1), 1) * 10
+            reliability_score = float(offer.supplier.rating / 5 * 10)
+            score = round(price_score + lead_score + availability_score + reliability_score, 1)
+        offer_items.append({
+            "id": offer.id,
+            "supplier": offer.supplier.name,
+            "supplier_id": offer.supplier.id,
+            "supplier_rating": float(offer.supplier.rating),
+            "unit_price": float(offer.unit_price),
+            "total": float(total),
+            "lead_time_days": lead_time,
+            "moq": offer.moq,
+            "available_qty": offer.available_qty,
+            "payment_terms": offer.payment_terms,
+            "status": offer.status,
+            "notes": offer.notes,
+            "score": score,
+            "is_recommended": False,
+            "responded_at": offer.responded_at.isoformat() if offer.responded_at else None,
+        })
+    recommended = max((item for item in offer_items if item["score"]), key=lambda item: item["score"], default=None)
+    if recommended:
+        recommended["is_recommended"] = True
+    return {
+        "id": rfq.id,
+        "rfq_no": rfq.rfq_no,
+        "sku": rfq.product.sku,
+        "product": rfq.product.name,
+        "quantity": rfq.quantity,
+        "needed_by": rfq.needed_by.isoformat() if rfq.needed_by else None,
+        "status": rfq.status,
+        "purchase_plan_id": rfq.purchase_plan_id,
+        "notes": rfq.notes,
+        "requested_by": rfq.requested_by.get_full_name() or rfq.requested_by.username if rfq.requested_by else "System",
+        "created_at": rfq.created_at.isoformat(),
+        "offers": offer_items,
+        "recommended_offer_id": recommended["id"] if recommended else None,
+        "recommended_supplier": recommended["supplier"] if recommended else None,
+        "recommended_score": recommended["score"] if recommended else None,
+    }
+
+
+@csrf_exempt
+@roles_allowed("admin", "manager", "store")
+def rfq_view(request):
+    if request.method == "GET":
+        qs = RFQ.objects.select_related("product", "purchase_plan", "requested_by").prefetch_related("offers__supplier").all()[:50]
+        return JsonResponse({"items": [_rfq_detail(rfq) for rfq in qs], "count": qs.count()})
+    data = parse_body(request) or {}
+    action = str(data.get("action", "create"))
+    if action == "create":
+        try:
+            product = Product.objects.get(sku=str(data["sku"]).strip().upper())
+            plan = PurchasePlan.objects.filter(id=int(data["plan_id"])).first() if data.get("plan_id") else None
+            if plan and plan.product_id != product.id:
+                raise ValueError("Purchase plan does not match the selected SKU")
+            quantity = max(1, int(data.get("quantity") or (plan.recommended_qty if plan else 0)))
+            raw_suppliers = data.get("suppliers") or data.get("supplier_ids") or []
+            if isinstance(raw_suppliers, str):
+                raw_suppliers = [value.strip() for value in raw_suppliers.split(",") if value.strip()]
+            suppliers = []
+            for value in raw_suppliers:
+                supplier = Supplier.objects.filter(id=int(value)).first() if str(value).isdigit() else Supplier.objects.filter(name=value).first()
+                if supplier and supplier not in suppliers:
+                    suppliers.append(supplier)
+            if not suppliers:
+                suppliers = list(Supplier.objects.filter(active=True).order_by("name"))
+            if len(suppliers) < 2:
+                raise ValueError("Select at least two active suppliers for comparison")
+            needed_by = date.fromisoformat(str(data["needed_by"])) if data.get("needed_by") else None
+            rfq = RFQ.objects.create(rfq_no=f"RFQ-{timezone.now():%y%m%d}-{uuid4().hex[:4].upper()}", product=product, purchase_plan=plan, quantity=quantity, needed_by=needed_by, status="sent", notes=str(data.get("notes", "")).strip(), requested_by=request.api_user)
+            RFQOffer.objects.bulk_create([RFQOffer(rfq=rfq, supplier=supplier, lead_time_days=supplier.lead_time_days) for supplier in suppliers])
+        except Exception as exc:
+            return JsonResponse({"detail": f"Could not send RFQ: {exc}"}, status=400)
+        record_audit(request, "send supplier RFQ", "rfq", rfq.id, f"{rfq.rfq_no} / {product.sku} / {len(suppliers)} suppliers")
+        return JsonResponse({"item": _rfq_detail(rfq)}, status=201)
+    if action == "quote":
+        try:
+            offer = RFQOffer.objects.select_related("rfq", "supplier").get(id=int(data["offer_id"]))
+            offer.unit_price = Decimal(str(data["unit_price"]))
+            offer.lead_time_days = max(0, int(data.get("lead_time_days") or offer.supplier.lead_time_days))
+            offer.moq = max(1, int(data.get("moq") or 1))
+            offer.available_qty = max(0, int(data.get("available_qty") or 0))
+            offer.payment_terms = str(data.get("payment_terms", "")).strip()
+            offer.notes = str(data.get("notes", "")).strip()
+            offer.status = "received"
+            offer.responded_at = timezone.now()
+            offer.save(update_fields=["unit_price", "lead_time_days", "moq", "available_qty", "payment_terms", "notes", "status", "responded_at"])
+            offer.rfq.status = "quoted"
+            offer.rfq.save(update_fields=["status"])
+        except Exception as exc:
+            return JsonResponse({"detail": f"Could not record supplier quote: {exc}"}, status=400)
+        record_audit(request, "record supplier quote", "rfq offer", offer.id, f"{offer.rfq.rfq_no} / {offer.supplier.name}")
+        return JsonResponse({"item": _rfq_detail(offer.rfq)})
+    if action == "select":
+        if request.api_user.profile.role not in {"admin", "manager"}:
+            return JsonResponse({"detail": "Only admin or manager can select an offer and create a PO"}, status=403)
+        try:
+            offer = RFQOffer.objects.select_related("rfq__product", "rfq__purchase_plan", "supplier").get(id=int(data["offer_id"]))
+            rfq = offer.rfq
+            if offer.status != "received" or not offer.unit_price:
+                raise ValueError("Only a received quote with a unit price can be selected")
+            if offer.available_qty < rfq.quantity:
+                raise ValueError("Selected supplier cannot cover the requested quantity")
+            expected_date = rfq.needed_by or (timezone.localdate() + timedelta(days=offer.lead_time_days or offer.supplier.lead_time_days))
+            total = offer.unit_price * rfq.quantity
+            po = PurchaseOrder.objects.create(po_no=f"PO-{timezone.now():%y%m%d}-{uuid4().hex[:4].upper()}", supplier=offer.supplier, status="approved", expected_date=expected_date, total=total, created_by=request.api_user)
+            PurchaseOrderItem.objects.create(purchase_order=po, product=rfq.product, quantity=rfq.quantity, unit_cost=offer.unit_price)
+            rfq.status = "selected"
+            rfq.save(update_fields=["status"])
+            rfq.offers.exclude(id=offer.id).update(status="rejected")
+            offer.status = "selected"
+            offer.save(update_fields=["status"])
+            if rfq.purchase_plan:
+                plan = rfq.purchase_plan
+                plan.supplier = offer.supplier
+                plan.unit_cost = offer.unit_price
+                plan.estimated_cost = total
+                plan.expected_date = expected_date
+                plan.status = "ordered"
+                plan.reviewed_by = request.api_user
+                plan.reviewed_at = timezone.now()
+                plan.purchase_order = po
+                plan.save(update_fields=["supplier", "unit_cost", "estimated_cost", "expected_date", "status", "reviewed_by", "reviewed_at", "purchase_order"])
+        except Exception as exc:
+            return JsonResponse({"detail": f"Could not select supplier offer: {exc}"}, status=400)
+        record_audit(request, "select supplier offer", "rfq", rfq.id, f"{offer.supplier.name} / {po.po_no}")
+        return JsonResponse({"item": _rfq_detail(rfq), "po_no": po.po_no})
+    if action == "close":
+        try:
+            rfq = RFQ.objects.get(id=int(data["id"]))
+            rfq.status = "closed"
+            rfq.save(update_fields=["status"])
+        except Exception as exc:
+            return JsonResponse({"detail": f"Could not close RFQ: {exc}"}, status=400)
+        return JsonResponse({"item": _rfq_detail(rfq)})
+    return JsonResponse({"detail": "Unknown RFQ action"}, status=400)
 
 @csrf_exempt
 @roles_allowed("admin", "manager", "sales")

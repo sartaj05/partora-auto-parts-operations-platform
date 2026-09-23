@@ -354,3 +354,38 @@ class PurchasePlan(models.Model):
     purchase_order = models.OneToOneField(PurchaseOrder, on_delete=models.SET_NULL, null=True, blank=True, related_name="purchase_plan")
     created_at = models.DateTimeField(auto_now_add=True)
     reviewed_at = models.DateTimeField(null=True, blank=True)
+
+
+class RFQ(models.Model):
+    STATUS_CHOICES = [("sent", "Sent"), ("quoted", "Quotes received"), ("selected", "Offer selected"), ("closed", "Closed")]
+    rfq_no = models.CharField(max_length=30, unique=True)
+    product = models.ForeignKey(Product, on_delete=models.PROTECT, related_name="rfqs")
+    purchase_plan = models.ForeignKey(PurchasePlan, on_delete=models.SET_NULL, null=True, blank=True, related_name="rfqs")
+    quantity = models.PositiveIntegerField()
+    needed_by = models.DateField(null=True, blank=True)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="sent")
+    notes = models.CharField(max_length=300, blank=True)
+    requested_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name="rfqs_requested")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+
+class RFQOffer(models.Model):
+    STATUS_CHOICES = [("pending", "Awaiting quote"), ("received", "Quote received"), ("selected", "Selected"), ("rejected", "Rejected")]
+    rfq = models.ForeignKey(RFQ, on_delete=models.CASCADE, related_name="offers")
+    supplier = models.ForeignKey(Supplier, on_delete=models.PROTECT, related_name="rfq_offers")
+    unit_price = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    lead_time_days = models.PositiveIntegerField(default=0)
+    moq = models.PositiveIntegerField(default=1)
+    available_qty = models.PositiveIntegerField(default=0)
+    payment_terms = models.CharField(max_length=80, blank=True)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="pending")
+    notes = models.CharField(max_length=240, blank=True)
+    responded_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["unit_price", "lead_time_days"]
+        unique_together = [("rfq", "supplier")]

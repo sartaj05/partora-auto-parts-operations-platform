@@ -1,4 +1,4 @@
-import { analyticsData, customers, demandPlanningData, demandPlanningState, demoAccounts, fitments, fulfillmentState, governanceState, inventory, inventoryControlState, mockDashboard, modulesByRole, portalState, priceRules, purchaseOrders, quotations, reorderSuggestions, returnsState, salesFlow, stock, supplierPerformanceState, suppliers, warehouseState } from '../mock/data'
+import { analyticsData, customers, demandPlanningData, demandPlanningState, demoAccounts, fitments, fulfillmentState, governanceState, inventory, inventoryControlState, mockDashboard, modulesByRole, portalState, priceRules, purchaseOrders, quotations, reorderSuggestions, returnsState, rfqState, salesFlow, stock, supplierPerformanceState, suppliers, warehouseState } from '../mock/data'
 
 const API_BASE = (import.meta.env.VITE_API_URL || '/api').replace(/\/$/, '')
 const NETWORK_MESSAGE = 'Backend unavailable. Demo mode is active.'
@@ -55,6 +55,7 @@ const fallback = {
   '/warehouses/': () => warehouseState,
   '/reorder/': () => ({ items: reorderSuggestions(), count: reorderSuggestions().length }),
   '/demand-planning/': () => demandPlanningData(),
+  '/rfq/': () => ({ items: rfqState.items, count: rfqState.items.length }),
   '/sales-flow/': () => salesFlow,
   '/fulfillment/': () => fulfillmentState,
   '/returns/': () => returnsState,
@@ -148,6 +149,28 @@ function createMock(path, payload, role) {
     if (payload.action === 'approve') { item.status = 'ordered'; item.po_no = `PO-FORECAST-${String(Date.now()).slice(-4)}` }
     if (payload.action === 'reject') item.status = 'rejected'
     return { item }
+  }
+  if (path === '/rfq/') {
+    if (payload.action === 'create') {
+      const product = inventory.find(x => x.sku === String(payload.sku || '').toUpperCase())
+      if (!product) throw new Error('SKU not found')
+      const names = String(payload.suppliers || '').split(',').map(x => x.trim()).filter(Boolean)
+      const selectedSuppliers = (names.length ? suppliers.filter(x => names.includes(x.name)) : suppliers).slice(0, 5)
+      if (selectedSuppliers.length < 2) throw new Error('Select at least two suppliers')
+      const item = { id:Date.now(), rfq_no:`RFQ-DEMO-${String(Date.now()).slice(-4)}`, sku:product.sku, product:product.name, quantity:Number(payload.quantity || 1), needed_by:payload.needed_by || null, status:'sent', purchase_plan_id:null, notes:payload.notes || '', requested_by:'Demo User', created_at:new Date().toISOString(), offers:selectedSuppliers.map((supplier,index) => ({ id:Date.now()+index, supplier:supplier.name, supplier_rating:supplier.rating, unit_price:0, total:0, lead_time_days:supplier.lead_time_days, moq:1, available_qty:0, payment_terms:'', status:'pending', notes:'', score:0, is_recommended:false })) }
+      rfqState.items.unshift(item); return { item }
+    }
+    const rfq = rfqState.items.find(x => x.id === Number(payload.id) || x.offers.some(offer => offer.id === Number(payload.offer_id)))
+    if (!rfq) throw new Error('RFQ not found')
+    if (payload.action === 'quote') {
+      const offer = rfq.offers.find(x => x.id === Number(payload.offer_id)); if (!offer) throw new Error('Offer not found')
+      offer.unit_price=Number(payload.unit_price||0); offer.total=offer.unit_price*rfq.quantity; offer.lead_time_days=Number(payload.lead_time_days||offer.lead_time_days); offer.moq=Number(payload.moq||1); offer.available_qty=Number(payload.available_qty||0); offer.payment_terms=payload.payment_terms||''; offer.notes=payload.notes||''; offer.status='received'; rfq.status='quoted'; return { item:rfq }
+    }
+    if (payload.action === 'select') {
+      const offer = rfq.offers.find(x => x.id === Number(payload.offer_id)); if (!offer || offer.status !== 'received') throw new Error('Record a supplier quote first')
+      offer.status='selected'; rfq.offers.filter(x => x.id !== offer.id).forEach(x => { x.status='rejected' }); rfq.status='selected'; rfq.recommended_offer_id=offer.id; rfq.recommended_supplier=offer.supplier; offer.po_no=`PO-RFQ-${String(Date.now()).slice(-4)}`; purchaseOrders.unshift({id:Date.now(),po_no:offer.po_no,supplier:offer.supplier,status:'approved',expected_date:rfq.needed_by,total:offer.total,created_by:'Demo Manager',line_count:1,received_lines:0}); return { item:rfq, po_no:offer.po_no }
+    }
+    if (payload.action === 'close') { rfq.status='closed'; return { item:rfq } }
   }
   if (path === '/portal/issue/') {
     const customer=customers.find(x=>x.id===Number(payload.customer_id));if(!customer)throw new Error('Customer not found');const token=`demo-${customer.id}-${Date.now()}`;const data={token,customer:{id:customer.id,name:customer.name,company:customer.company,email:customer.email},quotes:quotations.filter(q=>q.customer_company===customer.company).map(q=>({...q})),orders:salesFlow.orders.filter(o=>o.customer_company===customer.company).map(o=>({...o,fulfillment_status:o.status})),invoices:[]};portalState.tokens[token]=data;return {item:{token,customer:customer.company||customer.name,expires_at:new Date(Date.now()+30*86400000).toISOString(),portal_path:`/portal/${token}`},portal:data}

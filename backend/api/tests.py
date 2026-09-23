@@ -4,7 +4,7 @@ from django.contrib.auth.models import User
 from django.test import TestCase
 
 from .auth import issue_token
-from .models import DemandHistory, Product, Profile, PurchaseOrder, PurchasePlan, Supplier
+from .models import DemandHistory, Product, Profile, PurchaseOrder, PurchasePlan, RFQ, RFQOffer, Supplier
 
 
 class DemandPlanningApiTests(TestCase):
@@ -77,3 +77,40 @@ class DemandPlanningApiTests(TestCase):
 
         self.assertEqual(response.status_code, 403)
         self.assertEqual(PurchaseOrder.objects.count(), 0)
+
+    def test_rfq_compares_quotes_and_manager_selects_offer_into_po(self):
+        second_supplier = Supplier.objects.create(name="Alternate Components", lead_time_days=2, rating=4.2)
+        create_response = self.client.post(
+            "/api/rfq/",
+            data={"action": "create", "sku": "TEST-001", "quantity": 20, "suppliers": [str(self.supplier.id), str(second_supplier.id)]},
+            content_type="application/json",
+            **self.auth_headers(self.store),
+        )
+
+        self.assertEqual(create_response.status_code, 201)
+        rfq = RFQ.objects.get(id=create_response.json()["item"]["id"])
+        offers = list(rfq.offers.order_by("id"))
+        self.assertEqual(len(offers), 2)
+
+        for offer, price in zip(offers, (60, 58)):
+            response = self.client.post(
+                "/api/rfq/",
+                data={"action": "quote", "offer_id": offer.id, "unit_price": price, "lead_time_days": offer.supplier.lead_time_days, "moq": 5, "available_qty": 50, "payment_terms": "Net 30"},
+                content_type="application/json",
+                **self.auth_headers(self.store),
+            )
+            self.assertEqual(response.status_code, 200)
+
+        select_response = self.client.post(
+            "/api/rfq/",
+            data={"action": "select", "offer_id": offers[1].id},
+            content_type="application/json",
+            **self.auth_headers(self.manager),
+        )
+
+        self.assertEqual(select_response.status_code, 200)
+        rfq.refresh_from_db()
+        self.assertEqual(rfq.status, "selected")
+        self.assertEqual(PurchaseOrder.objects.count(), 1)
+        self.assertEqual(rfq.offers.get(status="selected").supplier_id, second_supplier.id)
+        self.assertEqual(rfq.offers.filter(status="rejected").count(), 1)

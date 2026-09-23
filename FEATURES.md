@@ -18,13 +18,14 @@ The enhanced demo adds operational modules on top of the original inventory, quo
 14. **Supplier performance** — measure PO delivery timing, fill rate, lead time, price snapshots and shortage planning.
 15. **Customer portal** — issue expiring share links so customers can review quotes, approve work, see orders/invoices and request repeats.
 16. **Demand forecasting & purchase planning** — calculate demand velocity, stock-out risk, safety stock, supplier-level spend and manager-approved replenishment plans.
+17. **Supplier RFQ & quote comparison** — request multiple supplier offers, compare price, lead time, availability and reliability, then select an approved offer into a purchase order.
 
 ## Role access
 
 - **Admin**: all modules.
 - **Manager**: all operational, commercial, reporting and approval modules.
 - **Sales**: inventory, barcodes, fitments, quotations, sales flow, CRM, pricing, analytics and governance inbox.
-- **Store**: inventory, stock, barcodes, fitments, purchase orders, warehouses, reorder, demand planning and governance inbox.
+- **Store**: inventory, stock, barcodes, fitments, purchase orders, warehouses, reorder, demand planning, supplier RFQs and governance inbox.
 
 ## Demo resilience
 

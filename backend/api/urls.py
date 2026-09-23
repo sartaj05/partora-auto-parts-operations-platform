@@ -17,6 +17,7 @@ urlpatterns = [
     path("warehouses/", views.warehouses_view),
     path("reorder/", views.reorder_view),
     path("demand-planning/", views.demand_planning_view),
+    path("rfq/", views.rfq_view),
     path("sales-flow/", views.sales_flow_view),
     path("fulfillment/", views.fulfillment_view),
     path("returns/", views.returns_view),

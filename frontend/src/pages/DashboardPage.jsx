@@ -4,7 +4,7 @@ import { createEndpoint, loadEndpoint } from '../api/client'
 import { useAuth } from '../context/AuthContext'
 import CreateModal from '../components/CreateModal'
 import StatusBadge from '../components/StatusBadge'
-import { BarcodePage, FitmentsPage, PurchaseOrdersPage, WarehousesPage, ReorderPage, DemandPlanningPage, SalesFlowPage, FulfillmentPage, ReturnsPage, InventoryControlPage, SupplierPerformancePage, PortalPage, CustomersPage, PricingPage, AnalyticsPage, GovernancePage } from './OperationsPages'
+import { BarcodePage, FitmentsPage, PurchaseOrdersPage, WarehousesPage, ReorderPage, DemandPlanningPage, RFQPage, SalesFlowPage, FulfillmentPage, ReturnsPage, InventoryControlPage, SupplierPerformancePage, PortalPage, CustomersPage, PricingPage, AnalyticsPage, GovernancePage } from './OperationsPages'
 
 const nav = [
   ['dashboard','/app','Overview','⌂'],
@@ -18,6 +18,7 @@ const nav = [
   ['warehouses','/app/warehouses','Warehouses','▦'],
   ['reorder','/app/reorder','Reorder desk','↻'],
   ['demand_planning','/app/demand-planning','Demand planning','✦'],
+  ['rfq','/app/rfq','Supplier RFQs','⇄'],
   ['sales_flow','/app/sales-flow','Sales flow','→'],
   ['fulfillment','/app/fulfillment','Fulfillment','✓'],
   ['returns','/app/returns','Returns & RMA','↩'],
@@ -177,6 +178,7 @@ export default function DashboardPage(){
     <Route path="warehouses" element={<Allowed module="warehouses"><WarehousesPage/></Allowed>}/>
     <Route path="reorder" element={<Allowed module="reorder"><ReorderPage/></Allowed>}/>
     <Route path="demand-planning" element={<Allowed module="demand_planning"><DemandPlanningPage/></Allowed>}/>
+    <Route path="rfq" element={<Allowed module="rfq"><RFQPage/></Allowed>}/>
     <Route path="sales-flow" element={<Allowed module="sales_flow"><SalesFlowPage/></Allowed>}/>
     <Route path="fulfillment" element={<Allowed module="fulfillment"><FulfillmentPage/></Allowed>}/>
     <Route path="returns" element={<Allowed module="returns"><ReturnsPage/></Allowed>}/>
