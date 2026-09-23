@@ -197,3 +197,15 @@ class DemandPlanningApiTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertIn("RLY-24V4", response.json()["item"]["answer"])
+
+    def test_deployability_suite_endpoints_are_available(self):
+        for path, key in (
+            ("/api/integrations/", "connections"),
+            ("/api/pwa-admin/", "devices"),
+            ("/api/tenancy/", "branches"),
+            ("/api/automation/", "rules"),
+            ("/api/fleet/", "vehicles"),
+        ):
+            response = self.client.get(path, **self.auth_headers(self.manager))
+            self.assertEqual(response.status_code, 200, path)
+            self.assertIn(key, response.json())

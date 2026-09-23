@@ -6,10 +6,10 @@ export const demoAccounts = [
 ]
 
 export const modulesByRole = {
-  admin: ['dashboard', 'inventory', 'quotations', 'suppliers', 'stock', 'barcodes', 'fitments', 'purchase_orders', 'receiving', 'mobile_warehouse', 'warehouses', 'reorder', 'demand_planning', 'rfq', 'sales_flow', 'fulfillment', 'notifications', 'copilot', 'finance', 'warranty_intelligence', 'crm', 'pricing', 'analytics', 'governance'],
-  manager: ['dashboard', 'inventory', 'quotations', 'suppliers', 'stock', 'barcodes', 'fitments', 'purchase_orders', 'receiving', 'mobile_warehouse', 'warehouses', 'reorder', 'demand_planning', 'rfq', 'sales_flow', 'fulfillment', 'notifications', 'copilot', 'finance', 'warranty_intelligence', 'crm', 'pricing', 'analytics', 'governance'],
-  sales: ['dashboard', 'inventory', 'quotations', 'barcodes', 'fitments', 'sales_flow', 'fulfillment', 'notifications', 'copilot', 'finance', 'warranty_intelligence', 'crm', 'pricing', 'analytics', 'governance'],
-  store: ['dashboard', 'inventory', 'stock', 'barcodes', 'fitments', 'purchase_orders', 'receiving', 'mobile_warehouse', 'warehouses', 'reorder', 'demand_planning', 'rfq', 'fulfillment', 'notifications', 'copilot', 'warranty_intelligence', 'governance'],
+  admin: ['dashboard', 'inventory', 'quotations', 'suppliers', 'stock', 'barcodes', 'fitments', 'purchase_orders', 'receiving', 'mobile_warehouse', 'warehouses', 'reorder', 'demand_planning', 'rfq', 'sales_flow', 'fulfillment', 'notifications', 'copilot', 'finance', 'warranty_intelligence', 'integrations', 'pwa_admin', 'tenancy', 'automation', 'fleet', 'crm', 'pricing', 'analytics', 'governance'],
+  manager: ['dashboard', 'inventory', 'quotations', 'suppliers', 'stock', 'barcodes', 'fitments', 'purchase_orders', 'receiving', 'mobile_warehouse', 'warehouses', 'reorder', 'demand_planning', 'rfq', 'sales_flow', 'fulfillment', 'notifications', 'copilot', 'finance', 'warranty_intelligence', 'integrations', 'pwa_admin', 'tenancy', 'automation', 'fleet', 'crm', 'pricing', 'analytics', 'governance'],
+  sales: ['dashboard', 'inventory', 'quotations', 'barcodes', 'fitments', 'sales_flow', 'fulfillment', 'notifications', 'copilot', 'finance', 'warranty_intelligence', 'integrations', 'fleet', 'crm', 'pricing', 'analytics', 'governance'],
+  store: ['dashboard', 'inventory', 'stock', 'barcodes', 'fitments', 'purchase_orders', 'receiving', 'mobile_warehouse', 'warehouses', 'reorder', 'demand_planning', 'rfq', 'fulfillment', 'notifications', 'copilot', 'warranty_intelligence', 'pwa_admin', 'automation', 'fleet', 'governance'],
 }
 
 export const inventory = [
@@ -255,4 +255,38 @@ export const warrantyState = {
     { id:2, claim_no:'RMA-260922-6F10', sku:'HLM-H7', product:'H7 LED Headlamp Pair', customer:'Metro Garage', reason:'Intermittent failure', status:'approved', resolution:'credit', supplier:'VoltEdge Electricals', recovery_amount:3300, root_cause:'Driver board defect', created_at:'2026-09-22' },
     { id:3, claim_no:'RMA-260919-51D4', sku:'FLT-2210', product:'Engine Oil Filter', customer:'Rapid Fleet Care', reason:'Wrong fitment', status:'resolved', resolution:'restock', supplier:'TorqueLine Components', recovery_amount:0, root_cause:'Catalog fitment mismatch', created_at:'2026-09-19' },
   ],
+}
+
+export const integrationsState = {
+  connections: [
+    { id:1, name:'Zoho Books', type:'accounting', status:'connected', last_sync:'2026-09-23T09:38:00+05:30', records:184 },
+    { id:2, name:'WhatsApp Business', type:'messaging', status:'connected', last_sync:'2026-09-23T09:35:00+05:30', records:42 },
+    { id:3, name:'Shiprocket', type:'shipping', status:'attention', last_sync:'2026-09-23T08:10:00+05:30', records:18 },
+    { id:4, name:'Razorpay', type:'payments', status:'available', last_sync:null, records:0 },
+  ],
+  webhooks: [{ id:1, event:'invoice.paid', target:'https://client.example/webhooks/partora', status:'active', deliveries:42 }],
+  logs: [{ id:1, event:'invoice.paid', target:'Zoho Books', status:'delivered', created_at:'2026-09-23T09:38:00+05:30' },{ id:2, event:'shipment.dispatched', target:'Shiprocket', status:'retrying', created_at:'2026-09-23T08:10:00+05:30' }],
+}
+
+export const pwaState = {
+  devices: [{ id:1, name:'Kabir Store · Android', warehouse:'DEL-MAIN', status:'online', app_version:'1.4.0', last_seen:'2026-09-23T09:41:00+05:30' },{ id:2, name:'Receiving Tablet · iPad', warehouse:'GUR-SAT', status:'offline', app_version:'1.3.8', last_seen:'2026-09-23T08:52:00+05:30' }],
+  sync: { queued:3, synced_today:126, conflicts:1, last_sync:'2026-09-23T09:41:00+05:30' },
+  conflicts: [{ id:1, reference:'CNT-260923-1A90', field:'counted_qty', local_value:3, server_value:4, status:'needs_review' }],
+}
+
+export const tenantState = {
+  organization: { id:1, name:'Partora Auto Parts India', plan:'Growth', branches:3, users:12, monthly_events:8420 },
+  branches: [{ id:1, code:'DEL-MAIN', name:'Delhi Main Warehouse', users:6, status:'active' },{ id:2, code:'GUR-SAT', name:'Gurugram Satellite Store', users:4, status:'active' },{ id:3, code:'NOI-NTH', name:'Noida North Store', users:2, status:'active' }],
+  users: [{ id:1, name:'Aarav Admin', email:'admin@partora.demo', role:'admin', branch:'All branches', approval_limit:500000, status:'active' },{ id:2, name:'Meera Manager', email:'manager@partora.demo', role:'manager', branch:'DEL-MAIN', approval_limit:150000, status:'active' },{ id:3, name:'Kabir Store', email:'store@partora.demo', role:'store', branch:'GUR-SAT', approval_limit:0, status:'active' }],
+}
+
+export const automationState = {
+  rules: [{ id:1, name:'Low-stock manager alert', trigger:'stock.below_reorder', action:'Send notification', status:'active', runs:18, last_run:'2026-09-23T09:20:00+05:30' },{ id:2, name:'Block invoice mismatch', trigger:'invoice.exception', action:'Create approval', status:'active', runs:4, last_run:'2026-09-23T08:55:00+05:30' },{ id:3, name:'Contract renewal reminder', trigger:'contract.expiring_30d', action:'Create review task', status:'paused', runs:2, last_run:'2026-09-20T10:00:00+05:30' }],
+  runs: [{ id:1, rule:'Low-stock manager alert', result:'success', detail:'RLY-24V4 notification sent', created_at:'2026-09-23T09:20:00+05:30' },{ id:2, rule:'Block invoice mismatch', result:'success', detail:'VE-INV-8821 approval created', created_at:'2026-09-23T08:55:00+05:30' }],
+}
+
+export const fleetState = {
+  vehicles: [{ id:1, registration:'DL 01 AB 2488', customer:'Rapid Fleet Care', make:'Tata', model:'Ace Gold', year:2022, mileage:68240, next_service:'2026-10-04', status:'due_soon' },{ id:2, registration:'HR 26 CX 9012', customer:'Northline Repairs', make:'Hyundai', model:'i20', year:2023, mileage:42110, next_service:'2026-11-18', status:'healthy' },{ id:3, registration:'DL 04 MK 7761', customer:'Metro Garage', make:'Maruti Suzuki', model:'Swift', year:2020, mileage:88700, next_service:'2026-09-28', status:'overdue' }],
+  work_orders: [{ id:1, order_no:'WO-260923-018', registration:'DL 01 AB 2488', customer:'Rapid Fleet Care', technician:'Ravi Kumar', status:'scheduled', due_date:'2026-10-04', parts_value:4850, labor_value:1800, notes:'Replace brake pads and oil filter' },{ id:2, order_no:'WO-260921-014', registration:'DL 04 MK 7761', customer:'Metro Garage', technician:'Sana Iqbal', status:'in_progress', due_date:'2026-09-28', parts_value:7200, labor_value:2200, notes:'Full service and headlamp diagnosis' }],
+  reminders: [{ id:1, type:'service_due', title:'Service due in 11 days', detail:'DL 01 AB 2488 · Rapid Fleet Care', status:'queued' },{ id:2, type:'overdue', title:'Service overdue', detail:'DL 04 MK 7761 · Metro Garage', status:'urgent' }],
 }

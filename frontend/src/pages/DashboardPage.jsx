@@ -4,10 +4,15 @@ import { createEndpoint, loadEndpoint } from '../api/client'
 import { useAuth } from '../context/AuthContext'
 import CreateModal from '../components/CreateModal'
 import StatusBadge from '../components/StatusBadge'
-import { BarcodePage, VinFitmentPage, MobileWarehousePage, PurchaseOrdersPage, ReceivingPage, WarehouseControlPage, WarehousesPage, ReorderPage, DemandPlanningPage, RFQPage, SalesFlowPage, FulfillmentPage, NotificationsPage, CopilotPage, FinancePage, WarrantyIntelligencePage, ReturnsPage, InventoryControlPage, SupplierIntelligencePage, DealerPortalPage, PortalPage, CustomersPage, PricingPage, CommandCenterPage, GovernancePage } from './OperationsPages'
+import { BarcodePage, VinFitmentPage, MobileWarehousePage, PurchaseOrdersPage, ReceivingPage, WarehouseControlPage, WarehousesPage, ReorderPage, DemandPlanningPage, RFQPage, SalesFlowPage, FulfillmentPage, NotificationsPage, CopilotPage, FinancePage, WarrantyIntelligencePage, ReturnsPage, InventoryControlPage, SupplierIntelligencePage, DealerPortalPage, PortalPage, CustomersPage, PricingPage, CommandCenterPage, GovernancePage, IntegrationsPage, PwaAdminPage, TenancyPage, AutomationPage, FleetPage } from './OperationsPages'
 
 const nav = [
   ['receiving','/app/receiving','Receiving & matching','+'],
+  ['integrations','/app/integrations','Integrations hub','↗'],
+  ['pwa_admin','/app/pwa-admin','PWA devices','▣'],
+  ['tenancy','/app/tenancy','Organizations','◎'],
+  ['automation','/app/automation','Automation','↻'],
+  ['fleet','/app/fleet','Fleet service','▤'],
   ['mobile_warehouse','/app/mobile-warehouse','Mobile warehouse','▣'],
   ['notifications','/app/notifications','Notifications','✉'],
   ['copilot','/app/copilot','AI copilot','✦'],
@@ -193,6 +198,11 @@ export default function DashboardPage(){
     <Route path="copilot" element={<Allowed module="copilot"><CopilotPage/></Allowed>}/>
     <Route path="finance" element={<Allowed module="finance"><FinancePage/></Allowed>}/>
     <Route path="warranty" element={<Allowed module="warranty_intelligence"><WarrantyIntelligencePage/></Allowed>}/>
+    <Route path="integrations" element={<Allowed module="integrations"><IntegrationsPage/></Allowed>}/>
+    <Route path="pwa-admin" element={<Allowed module="pwa_admin"><PwaAdminPage/></Allowed>}/>
+    <Route path="tenancy" element={<Allowed module="tenancy"><TenancyPage/></Allowed>}/>
+    <Route path="automation" element={<Allowed module="automation"><AutomationPage/></Allowed>}/>
+    <Route path="fleet" element={<Allowed module="fleet"><FleetPage/></Allowed>}/>
     <Route path="returns" element={<Allowed module="returns"><ReturnsPage/></Allowed>}/>
     <Route path="inventory-control" element={<Allowed module="inventory_control"><InventoryControlPage/></Allowed>}/>
     <Route path="supplier-performance" element={<Allowed module="supplier_performance"><SupplierIntelligencePage/></Allowed>}/>

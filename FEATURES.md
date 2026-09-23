@@ -49,6 +49,22 @@ Mobile Warehouse → Notifications → AI Copilot → Finance & GST → Warranty
 - **Finance & GST** — reconcile payments, review receivables, estimate GST and export finance CSV data.
 - **Warranty Intelligence** — monitor claim approvals, root causes, supplier recovery and return-rate trends.
 
+## Deployability & scale suite
+
+The next five client-facing platform capabilities complete the path from an impressive demo to a deployable operations product:
+
+```text
+Integrations Hub -> Production Mobile PWA -> Multi-Tenant SaaS -> Workflow Automation -> Fleet Maintenance
+```
+
+- **Integrations Hub** — connect accounting, messaging, shipping, payments, VIN providers and webhooks with connection health and delivery history.
+- **Production Mobile PWA** — monitor registered devices, offline queues, sync retries and conflicts that need manager review.
+- **Multi-Tenant SaaS & permissions** — separate organizations and branches, invite users, assign role scope and set approval ceilings.
+- **Workflow Automation Builder** — define trigger/action rules, run them on demand, pause them safely and retain execution history.
+- **Fleet Maintenance** — register fleet vehicles, track service reminders and manage technician work orders with parts and labor value.
+
+All five screens use the same API-or-local-demo fallback as the rest of the product, so a client walkthrough remains usable when the backend is offline.
+
 ## Role access
 
 - **Admin**: all modules.

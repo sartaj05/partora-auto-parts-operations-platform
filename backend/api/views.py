@@ -14,10 +14,10 @@ from .models import Product, Quotation, StockMovement, Supplier, SupplierContrac
 from .serializers import product_dict, quotation_dict, supplier_dict
 
 ROLE_MODULES = {
-    "admin": ["dashboard", "inventory", "quotations", "suppliers", "stock", "barcodes", "fitments", "purchase_orders", "receiving", "mobile_warehouse", "warehouses", "reorder", "demand_planning", "rfq", "sales_flow", "fulfillment", "notifications", "copilot", "finance", "warranty_intelligence", "returns", "inventory_control", "supplier_performance", "portal", "crm", "pricing", "analytics", "governance"],
-    "manager": ["dashboard", "inventory", "quotations", "suppliers", "stock", "barcodes", "fitments", "purchase_orders", "receiving", "mobile_warehouse", "warehouses", "reorder", "demand_planning", "rfq", "sales_flow", "fulfillment", "notifications", "copilot", "finance", "warranty_intelligence", "returns", "inventory_control", "supplier_performance", "portal", "crm", "pricing", "analytics", "governance"],
-    "sales": ["dashboard", "inventory", "quotations", "barcodes", "fitments", "sales_flow", "fulfillment", "notifications", "copilot", "finance", "warranty_intelligence", "returns", "portal", "crm", "pricing", "analytics", "governance"],
-    "store": ["dashboard", "inventory", "stock", "barcodes", "fitments", "purchase_orders", "receiving", "mobile_warehouse", "warehouses", "reorder", "demand_planning", "rfq", "sales_flow", "fulfillment", "notifications", "copilot", "warranty_intelligence", "returns", "inventory_control", "supplier_performance", "governance"],
+    "admin": ["dashboard", "inventory", "quotations", "suppliers", "stock", "barcodes", "fitments", "purchase_orders", "receiving", "mobile_warehouse", "warehouses", "reorder", "demand_planning", "rfq", "sales_flow", "fulfillment", "notifications", "copilot", "finance", "warranty_intelligence", "integrations", "pwa_admin", "tenancy", "automation", "fleet", "returns", "inventory_control", "supplier_performance", "portal", "crm", "pricing", "analytics", "governance"],
+    "manager": ["dashboard", "inventory", "quotations", "suppliers", "stock", "barcodes", "fitments", "purchase_orders", "receiving", "mobile_warehouse", "warehouses", "reorder", "demand_planning", "rfq", "sales_flow", "fulfillment", "notifications", "copilot", "finance", "warranty_intelligence", "integrations", "pwa_admin", "tenancy", "automation", "fleet", "returns", "inventory_control", "supplier_performance", "portal", "crm", "pricing", "analytics", "governance"],
+    "sales": ["dashboard", "inventory", "quotations", "barcodes", "fitments", "sales_flow", "fulfillment", "notifications", "copilot", "finance", "warranty_intelligence", "integrations", "fleet", "returns", "portal", "crm", "pricing", "analytics", "governance"],
+    "store": ["dashboard", "inventory", "stock", "barcodes", "fitments", "purchase_orders", "receiving", "mobile_warehouse", "warehouses", "reorder", "demand_planning", "rfq", "sales_flow", "fulfillment", "notifications", "copilot", "warranty_intelligence", "pwa_admin", "automation", "fleet", "returns", "inventory_control", "supplier_performance", "governance"],
 }
 
 def parse_body(request):
@@ -447,6 +447,54 @@ def warranty_view(request):
         record_audit(request,"update warranty claim","return",item.id,item.return_no); return JsonResponse({"item":claim_item(item)})
     except Exception as exc:
         return JsonResponse({"detail": f"Could not update warranty claim: {exc}"}, status=400)
+
+@csrf_exempt
+@roles_allowed("admin", "manager", "store")
+def integrations_view(request):
+    if request.method == "GET":
+        connections=[{"id":1,"name":"Zoho Books","type":"accounting","status":"connected","last_sync":timezone.now().isoformat(),"records":184},{"id":2,"name":"WhatsApp Business","type":"messaging","status":"connected","last_sync":timezone.now().isoformat(),"records":42},{"id":3,"name":"Shiprocket","type":"shipping","status":"attention","last_sync":(timezone.now()-timedelta(hours=1)).isoformat(),"records":18},{"id":4,"name":"Razorpay","type":"payments","status":"available","last_sync":None,"records":0}]
+        logs=[{"id":a.id,"event":a.action,"target":"Partora webhook","status":"delivered","created_at":a.created_at.isoformat()} for a in AuditLog.objects.filter(action__icontains="integration").order_by("-created_at")[:20]]
+        return JsonResponse({"connections":connections,"webhooks":[{"id":1,"event":"invoice.paid","target":"https://client.example/webhooks/partora","status":"active","deliveries":42}],"logs":logs})
+    data=parse_body(request) or {}; action=str(data.get("action","connect"))
+    item={"id":uuid4().hex[:8],"name":str(data.get("name","New connector")),"type":str(data.get("type","webhook")),"status":"connected","last_sync":timezone.now().isoformat(),"records":0}
+    if action == "webhook": item={"id":uuid4().hex[:8],"event":str(data.get("event","invoice.paid")),"target":str(data.get("target","https://client.example/webhooks/partora")),"status":"active","deliveries":0}
+    record_audit(request,"integration setup","integration",item["id"],item.get("name",item.get("event","webhook")))
+    return JsonResponse({"item":item},status=201)
+
+@csrf_exempt
+@roles_allowed("admin", "manager", "store")
+def pwa_admin_view(request):
+    if request.method == "GET":
+        return JsonResponse({"devices":[{"id":1,"name":"Kabir Store · Android","warehouse":"DEL-MAIN","status":"online","app_version":"1.4.0","last_seen":timezone.now().isoformat()},{"id":2,"name":"Receiving Tablet · iPad","warehouse":"GUR-SAT","status":"offline","app_version":"1.3.8","last_seen":(timezone.now()-timedelta(hours=1)).isoformat()}],"sync":{"queued":3,"synced_today":126,"conflicts":1,"last_sync":timezone.now().isoformat()},"conflicts":[{"id":1,"reference":"CNT-260923-1A90","field":"counted_qty","local_value":3,"server_value":4,"status":"needs_review"}]})
+    data=parse_body(request) or {}; action=str(data.get("action","sync")); item={"id":data.get("id"),"status":"resolved" if action=="resolve" else "synced","last_sync":timezone.now().isoformat()}; record_audit(request,"pwa sync action","device",item["id"] or "queue",action); return JsonResponse({"item":item})
+
+@csrf_exempt
+@roles_allowed("admin", "manager", "store")
+def tenancy_view(request):
+    if request.method == "GET":
+        branches=[{"id":w.id,"code":w.code,"name":w.name,"users":0,"status":"active"} for w in Warehouse.objects.filter(active=True).order_by("code")]
+        users=[{"id":request.api_user.id,"name":request.api_user.get_full_name() or request.api_user.username,"email":request.api_user.email,"role":request.api_user.profile.role,"branch":"All branches","approval_limit":500000 if request.api_user.profile.role=="admin" else 150000,"status":"active"}]
+        return JsonResponse({"organization":{"id":1,"name":"Partora Auto Parts India","plan":"Growth","branches":len(branches),"users":len(users),"monthly_events":8420},"branches":branches,"users":users})
+    data=parse_body(request) or {}; action=str(data.get("action","invite"))
+    if action=="branch":
+        try: branch=Warehouse.objects.create(code=str(data["code"]).strip().upper(),name=str(data["name"]).strip(),address=str(data.get("address",""))); item={"id":branch.id,"code":branch.code,"name":branch.name,"users":0,"status":"active"}
+        except Exception as exc: return JsonResponse({"detail":f"Could not create branch: {exc}"},status=400)
+    else: item={"id":uuid4().hex[:8],"name":str(data.get("name","Invited user")),"email":str(data.get("email","")),"role":str(data.get("role","store")),"branch":str(data.get("branch","All branches")),"approval_limit":float(data.get("approval_limit",0) or 0),"status":"invited"}
+    record_audit(request,"tenant administration","organization",item["id"],action); return JsonResponse({"item":item},status=201)
+
+@csrf_exempt
+@roles_allowed("admin", "manager", "store")
+def automation_view(request):
+    if request.method == "GET":
+        return JsonResponse({"rules":[{"id":1,"name":"Low-stock manager alert","trigger":"stock.below_reorder","action":"Send notification","status":"active","runs":18,"last_run":timezone.now().isoformat()},{"id":2,"name":"Block invoice mismatch","trigger":"invoice.exception","action":"Create approval","status":"active","runs":4,"last_run":timezone.now().isoformat()},{"id":3,"name":"Contract renewal reminder","trigger":"contract.expiring_30d","action":"Create review task","status":"paused","runs":2,"last_run":(timezone.now()-timedelta(days=3)).isoformat()}],"runs":[]})
+    data=parse_body(request) or {}; item={"id":uuid4().hex[:8],"name":str(data.get("name","New automation rule")),"trigger":str(data.get("trigger","stock.below_reorder")),"action":str(data.get("rule_action","Send notification")),"status":"active","runs":0,"last_run":None}; record_audit(request,"automation rule","rule",item["id"],item["name"]); return JsonResponse({"item":item},status=201)
+
+@csrf_exempt
+@roles_allowed("admin", "manager", "sales", "store")
+def fleet_view(request):
+    if request.method == "GET":
+        return JsonResponse({"vehicles":[{"id":1,"registration":"DL 01 AB 2488","customer":"Rapid Fleet Care","make":"Tata","model":"Ace Gold","year":2022,"mileage":68240,"next_service":"2026-10-04","status":"due_soon"},{"id":2,"registration":"HR 26 CX 9012","customer":"Northline Repairs","make":"Hyundai","model":"i20","year":2023,"mileage":42110,"next_service":"2026-11-18","status":"healthy"},{"id":3,"registration":"DL 04 MK 7761","customer":"Metro Garage","make":"Maruti Suzuki","model":"Swift","year":2020,"mileage":88700,"next_service":"2026-09-28","status":"overdue"}],"work_orders":[{"id":1,"order_no":"WO-260923-018","registration":"DL 01 AB 2488","customer":"Rapid Fleet Care","technician":"Ravi Kumar","status":"scheduled","due_date":"2026-10-04","parts_value":4850,"labor_value":1800,"notes":"Replace brake pads and oil filter"},{"id":2,"order_no":"WO-260921-014","registration":"DL 04 MK 7761","customer":"Metro Garage","technician":"Sana Iqbal","status":"in_progress","due_date":"2026-09-28","parts_value":7200,"labor_value":2200,"notes":"Full service and headlamp diagnosis"}],"reminders":[{"id":1,"type":"service_due","title":"Service due in 11 days","detail":"DL 01 AB 2488 · Rapid Fleet Care","status":"queued"},{"id":2,"type":"overdue","title":"Service overdue","detail":"DL 04 MK 7761 · Metro Garage","status":"urgent"}]})
+    data=parse_body(request) or {}; action=str(data.get("action","work_order")); item={"id":uuid4().hex[:8],"order_no":f"WO-{timezone.now():%y%m%d}-{uuid4().hex[:3].upper()}","registration":data.get("registration"),"customer":data.get("customer"),"technician":data.get("technician"),"status":"scheduled","due_date":data.get("due_date"),"parts_value":float(data.get("parts_value",0) or 0),"labor_value":float(data.get("labor_value",0) or 0),"notes":data.get("notes","")}; record_audit(request,"fleet work order","fleet",item["id"],action); return JsonResponse({"item":item},status=201)
 
 @csrf_exempt
 @roles_allowed("admin", "manager", "store")

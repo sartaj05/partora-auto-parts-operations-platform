@@ -1,4 +1,4 @@
-import { analyticsData, copilotState, customers, demandPlanningData, demandPlanningState, demoAccounts, financeState, fitments, fulfillmentState, governanceState, inventory, inventoryControlState, mockDashboard, mobileWarehouseState, modulesByRole, notificationState, portalState, priceRules, purchaseOrders, quotations, receivingState, reorderSuggestions, returnsState, rfqState, salesFlow, stock, supplierPerformanceState, suppliers, vinVehicles, warehouseState, warrantyState } from '../mock/data'
+import { analyticsData, automationState, copilotState, customers, demandPlanningData, demandPlanningState, demoAccounts, financeState, fitments, fleetState, fulfillmentState, governanceState, integrationsState, inventory, inventoryControlState, mockDashboard, mobileWarehouseState, modulesByRole, notificationState, portalState, priceRules, pwaState, purchaseOrders, quotations, receivingState, reorderSuggestions, returnsState, rfqState, salesFlow, stock, supplierPerformanceState, suppliers, tenantState, vinVehicles, warehouseState, warrantyState } from '../mock/data'
 
 const API_BASE = (import.meta.env.VITE_API_URL || '/api').replace(/\/$/, '')
 const NETWORK_MESSAGE = 'Backend unavailable. Demo mode is active.'
@@ -71,6 +71,11 @@ const fallback = {
   '/copilot/': () => copilotState,
   '/finance/': () => financeState,
   '/warranty/': () => warrantyState,
+  '/integrations/': () => integrationsState,
+  '/pwa-admin/': () => pwaState,
+  '/tenancy/': () => tenantState,
+  '/automation/': () => automationState,
+  '/fleet/': () => fleetState,
 }
 
 export async function loadEndpoint(path, role) {
@@ -103,6 +108,28 @@ export async function portalAction(token, payload) {
 
 function createMock(path, payload, role) {
   const id = Date.now()
+  if (path === '/integrations/') {
+    if (payload.action === 'connect') { const item={id,name:payload.name||'New connector',type:payload.type||'webhook',status:'connected',last_sync:new Date().toISOString(),records:0}; integrationsState.connections.unshift(item); return {item} }
+    if (payload.action === 'test') { const item=integrationsState.connections.find(x=>x.id===Number(payload.id)); if(!item)throw new Error('Integration not found'); item.status='connected'; item.last_sync=new Date().toISOString(); return {item} }
+    if (payload.action === 'webhook') { const item={id,event:payload.event||'invoice.paid',target:payload.target||'https://client.example/webhooks/partora',status:'active',deliveries:0}; integrationsState.webhooks.unshift(item); return {item} }
+  }
+  if (path === '/pwa-admin/') {
+    if (payload.action === 'resolve') { const item=pwaState.conflicts.find(x=>x.id===Number(payload.id)); if(!item)throw new Error('Sync conflict not found'); item.status='resolved'; pwaState.sync.conflicts=Math.max(0,pwaState.sync.conflicts-1); return {item} }
+    if (payload.action === 'sync') { pwaState.sync.queued=0; pwaState.sync.synced_today+=1; pwaState.sync.last_sync=new Date().toISOString(); return {item:{sync:pwaState.sync}} }
+  }
+  if (path === '/tenancy/') {
+    if (payload.action === 'invite') { const item={id,name:payload.name,email:payload.email,role:payload.role||'store',branch:payload.branch||'All branches',approval_limit:Number(payload.approval_limit||0),status:'invited'}; tenantState.users.unshift(item); return {item} }
+    if (payload.action === 'branch') { const item={id,code:String(payload.code||'').toUpperCase(),name:payload.name,users:0,status:'active'}; tenantState.branches.push(item); tenantState.organization.branches+=1; return {item} }
+  }
+  if (path === '/automation/') {
+    if (payload.action === 'rule') { const item={id,name:payload.name,trigger:payload.trigger,action:payload.rule_action||'Send notification',status:'active',runs:0,last_run:null}; automationState.rules.unshift(item); return {item} }
+    const item=automationState.rules.find(x=>x.id===Number(payload.id)); if(!item)throw new Error('Automation rule not found'); if(payload.action==='toggle')item.status=item.status==='active'?'paused':'active'; if(payload.action==='run'){item.runs+=1;item.last_run=new Date().toISOString();automationState.runs.unshift({id:Date.now(),rule:item.name,result:'success',detail:'Demo action completed',created_at:new Date().toISOString()})} return {item}
+  }
+  if (path === '/fleet/') {
+    if (payload.action === 'vehicle') { const item={id,registration:payload.registration,customer:payload.customer,make:payload.make,model:payload.model,year:Number(payload.year||2022),mileage:Number(payload.mileage||0),next_service:payload.next_service,status:'healthy'}; fleetState.vehicles.unshift(item); return {item} }
+    if (payload.action === 'work_order') { const item={id,order_no:`WO-DEMO-${String(id).slice(-5)}`,registration:payload.registration,customer:payload.customer,technician:payload.technician,status:'scheduled',due_date:payload.due_date,parts_value:Number(payload.parts_value||0),labor_value:Number(payload.labor_value||0),notes:payload.notes||''}; fleetState.work_orders.unshift(item); return {item} }
+    const item=fleetState.work_orders.find(x=>x.id===Number(payload.id)); if(!item)throw new Error('Work order not found'); item.status=payload.status||item.status; return {item}
+  }
   if (path === '/mobile-warehouse/') {
     if (payload.action === 'scan') { const item={id, type:payload.type||'count', reference:payload.reference||`SCAN-${String(id).slice(-5)}`, location:payload.location||'DEL-MAIN', sku:String(payload.sku||'').toUpperCase(), product:inventory.find(x=>x.sku===String(payload.sku||'').toUpperCase())?.name||'Scanned part', quantity:Number(payload.quantity||1), status:'queued', synced:false, created_at:new Date().toISOString()}; mobileWarehouseState.queue.unshift(item); return {item} }
     if (payload.action === 'sync') { mobileWarehouseState.queue.forEach(x=>{if(!x.synced){x.synced=true;x.status='synced'}}); mobileWarehouseState.last_sync=new Date().toISOString(); return {item:{queue:mobileWarehouseState.queue,last_sync:mobileWarehouseState.last_sync}} }
