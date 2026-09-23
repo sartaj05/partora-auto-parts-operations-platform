@@ -4,7 +4,7 @@ from django.core.management.base import BaseCommand
 from django.utils import timezone
 from api.models import (
     ApprovalRequest, AuditLog, Customer, Invoice, Notification, PriceRule, Product,
-    Profile, PurchaseOrder, PurchaseOrderItem, Quotation, SalesOrder, StockMovement,
+    Profile, PurchaseOrder, PurchaseOrderItem, Quotation, SalesOrder, StockMovement, DemandHistory,
     StockTransfer, Supplier, VehicleFitment, Warehouse, WarehouseStock,
 )
 
@@ -70,6 +70,15 @@ class Command(BaseCommand):
         ]
         for sku, make, model, y1, y2, variant, engine, oem in fitments:
             VehicleFitment.objects.update_or_create(product=products[sku], make=make, model=model, year_from=y1, defaults={"year_to": y2, "variant": variant, "engine": engine, "oem_number": oem})
+
+        demand_rows = {
+            "BRK-1048": [8, 10, 12], "FLT-2210": [18, 24, 30], "BLT-0812": [150, 180, 210],
+            "BRG-6204": [10, 14, 18], "MCB-C32": [12, 18, 20], "RLY-24V4": [24, 30, 36],
+            "HLM-H7": [6, 8, 10], "CBL-25R": [4, 6, 8],
+        }
+        for sku, quantities in demand_rows.items():
+            for days_ago, quantity in zip((60, 30, 0), quantities):
+                DemandHistory.objects.update_or_create(product=products[sku], warehouse=None, period_start=date.today() - timedelta(days=days_ago), defaults={"quantity": quantity, "source": "sales"})
 
         quote_rows = [
             ("QT-260921-104", "Anil Verma", "Metro Garage", 18450, "sent", 7, "sales"),

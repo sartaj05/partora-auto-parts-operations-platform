@@ -24,6 +24,7 @@ jobs:
       - run: python manage.py makemigrations --check --dry-run
       - run: python manage.py migrate --noinput
       - run: python manage.py seed_demo
+      - run: python manage.py test api
 
   frontend:
     runs-on: ubuntu-latest

@@ -6,10 +6,10 @@ export const demoAccounts = [
 ]
 
 export const modulesByRole = {
-  admin: ['dashboard', 'inventory', 'quotations', 'suppliers', 'stock', 'barcodes', 'fitments', 'purchase_orders', 'warehouses', 'reorder', 'sales_flow', 'fulfillment', 'crm', 'pricing', 'analytics', 'governance'],
-  manager: ['dashboard', 'inventory', 'quotations', 'suppliers', 'stock', 'barcodes', 'fitments', 'purchase_orders', 'warehouses', 'reorder', 'sales_flow', 'fulfillment', 'crm', 'pricing', 'analytics', 'governance'],
+  admin: ['dashboard', 'inventory', 'quotations', 'suppliers', 'stock', 'barcodes', 'fitments', 'purchase_orders', 'warehouses', 'reorder', 'demand_planning', 'sales_flow', 'fulfillment', 'crm', 'pricing', 'analytics', 'governance'],
+  manager: ['dashboard', 'inventory', 'quotations', 'suppliers', 'stock', 'barcodes', 'fitments', 'purchase_orders', 'warehouses', 'reorder', 'demand_planning', 'sales_flow', 'fulfillment', 'crm', 'pricing', 'analytics', 'governance'],
   sales: ['dashboard', 'inventory', 'quotations', 'barcodes', 'fitments', 'sales_flow', 'fulfillment', 'crm', 'pricing', 'analytics', 'governance'],
-  store: ['dashboard', 'inventory', 'stock', 'barcodes', 'fitments', 'purchase_orders', 'warehouses', 'reorder', 'fulfillment', 'governance'],
+  store: ['dashboard', 'inventory', 'stock', 'barcodes', 'fitments', 'purchase_orders', 'warehouses', 'reorder', 'demand_planning', 'fulfillment', 'governance'],
 }
 
 export const inventory = [
@@ -112,6 +112,31 @@ export const supplierPerformanceState = {
   suppliers: suppliers.map(s => ({ id:s.id, name:s.name, lead_time_days:s.lead_time_days, rating:s.rating, po_count:2, received_count:1, on_time_rate:100, fill_rate:92, latest_cost:null })),
   plans: reorderSuggestions().map(x => ({ sku:x.sku, product:x.name, supplier:x.supplier, stock_qty:x.stock_qty, reorder_level:x.reorder_level, suggested_qty:x.suggested_qty, lead_time_days:suppliers.find(s=>s.name===x.supplier)?.lead_time_days||3, expected_stockout:'2026-09-24' })),
   prices: [{ id:1, supplier:'TorqueLine Components', sku:'BRK-1048', product:'Ceramic Brake Pad Set', unit_cost:1519, captured_at:'2026-09-21T09:00:00+05:30' }],
+}
+
+const demandHistory = { 'BRK-1048': 30, 'FLT-2210': 72, 'BLT-0812': 540, 'BRG-6204': 42, 'MCB-C32': 50, 'RLY-24V4': 90, 'HLM-H7': 24, 'CBL-25R': 18 }
+
+export const demandPlanningState = { plans: [] }
+
+export function demandPlanningData() {
+  const today = new Date()
+  const items = inventory.map(product => {
+    const supplier = suppliers.find(x => x.name === product.supplier)
+    const lead = supplier?.lead_time_days || 3
+    const average = (demandHistory[product.sku] || 0) / 90
+    const safety = average ? Math.max(1, Math.ceil(average * Math.max(2, lead * .5))) : 0
+    const reorderPoint = Math.ceil(average * lead + safety)
+    const available = Math.max(0, product.stock_qty)
+    const stockoutDays = average ? Math.max(0, Math.floor(available / average)) : null
+    const recommended = available <= reorderPoint ? Math.max(product.reorder_qty || 25, Math.ceil(average * (lead + 30) + safety - available)) : 0
+    const date = stockoutDays === null ? null : new Date(today.getTime() + stockoutDays * 86400000).toISOString().slice(0, 10)
+    const risk = available <= 0 ? 'out' : stockoutDays !== null && stockoutDays <= lead ? 'urgent' : recommended ? 'watch' : 'healthy'
+    const plan = demandPlanningState.plans.find(x => x.sku === product.sku)
+    return { sku:product.sku, product:product.name, supplier:product.supplier, stock_qty:product.stock_qty, reserved_qty:0, available_qty:available, average_daily_demand:Number(average.toFixed(2)), lead_time_days:lead, safety_stock:safety, reorder_point:reorderPoint, stockout_days:stockoutDays, projected_stockout:date, recommended_qty:recommended, unit_cost:product.cost_price || product.price, estimated_cost:recommended * (product.cost_price || product.price), risk, plan_id:plan?.id || null, plan_status:plan?.status || null, po_no:plan?.po_no || null }
+  }).sort((a,b) => ({out:0,urgent:1,watch:2,healthy:3}[a.risk] - ({out:0,urgent:1,watch:2,healthy:3}[b.risk]) || b.recommended_qty - a.recommended_qty))
+  const totals = {}
+  items.filter(x => x.recommended_qty).forEach(item => { const group = totals[item.supplier] ||= { supplier:item.supplier, recommended_qty:0, estimated_cost:0, sku_count:0 }; group.recommended_qty += item.recommended_qty; group.estimated_cost += item.estimated_cost; group.sku_count += 1 })
+  return { window_days:90, horizon_days:30, generated_at:new Date().toISOString(), summary:{ at_risk:items.filter(x => x.recommended_qty).length, stockout_soon:items.filter(x => x.stockout_days !== null && x.stockout_days <= x.lead_time_days).length, estimated_cost:items.reduce((sum,x) => sum + x.estimated_cost, 0), forecasted_skus:items.length }, items, supplier_totals:Object.values(totals) }
 }
 
 export const portalState = { tokens: {} }

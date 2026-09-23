@@ -1,5 +1,7 @@
 import json
 from datetime import date, timedelta
+from decimal import Decimal
+from math import ceil
 from uuid import uuid4
 from django.contrib.auth import authenticate
 from django.db import transaction
@@ -8,14 +10,14 @@ from django.http import JsonResponse
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 from .auth import api_login_required, issue_token, roles_allowed
-from .models import Product, Quotation, StockMovement, Supplier, VehicleFitment, PurchaseOrder, PurchaseOrderItem, Warehouse, WarehouseStock, StockTransfer, SalesOrder, SalesOrderItem, Invoice, Payment, ReturnRequest, InventoryCount, InventoryCountLine, ProductLot, SupplierPriceSnapshot, Customer, CustomerPortalToken, PriceRule, Notification, ApprovalRequest, AuditLog
+from .models import Product, Quotation, StockMovement, Supplier, VehicleFitment, PurchaseOrder, PurchaseOrderItem, Warehouse, WarehouseStock, StockTransfer, SalesOrder, SalesOrderItem, Invoice, Payment, ReturnRequest, InventoryCount, InventoryCountLine, ProductLot, SupplierPriceSnapshot, Customer, CustomerPortalToken, PriceRule, Notification, ApprovalRequest, AuditLog, DemandHistory, PurchasePlan
 from .serializers import product_dict, quotation_dict, supplier_dict
 
 ROLE_MODULES = {
-    "admin": ["dashboard", "inventory", "quotations", "suppliers", "stock", "barcodes", "fitments", "purchase_orders", "warehouses", "reorder", "sales_flow", "fulfillment", "returns", "inventory_control", "supplier_performance", "portal", "crm", "pricing", "analytics", "governance"],
-    "manager": ["dashboard", "inventory", "quotations", "suppliers", "stock", "barcodes", "fitments", "purchase_orders", "warehouses", "reorder", "sales_flow", "fulfillment", "returns", "inventory_control", "supplier_performance", "portal", "crm", "pricing", "analytics", "governance"],
+    "admin": ["dashboard", "inventory", "quotations", "suppliers", "stock", "barcodes", "fitments", "purchase_orders", "warehouses", "reorder", "demand_planning", "sales_flow", "fulfillment", "returns", "inventory_control", "supplier_performance", "portal", "crm", "pricing", "analytics", "governance"],
+    "manager": ["dashboard", "inventory", "quotations", "suppliers", "stock", "barcodes", "fitments", "purchase_orders", "warehouses", "reorder", "demand_planning", "sales_flow", "fulfillment", "returns", "inventory_control", "supplier_performance", "portal", "crm", "pricing", "analytics", "governance"],
     "sales": ["dashboard", "inventory", "quotations", "barcodes", "fitments", "sales_flow", "fulfillment", "returns", "portal", "crm", "pricing", "analytics", "governance"],
-    "store": ["dashboard", "inventory", "stock", "barcodes", "fitments", "purchase_orders", "warehouses", "reorder", "sales_flow", "fulfillment", "returns", "inventory_control", "supplier_performance", "governance"],
+    "store": ["dashboard", "inventory", "stock", "barcodes", "fitments", "purchase_orders", "warehouses", "reorder", "demand_planning", "sales_flow", "fulfillment", "returns", "inventory_control", "supplier_performance", "governance"],
 }
 
 def parse_body(request):
@@ -523,6 +525,175 @@ def supplier_performance_view(request):
         return JsonResponse({"detail":f"Could not record supplier price: {exc}"},status=400)
     record_audit(request,"record supplier price","supplier",supplier.id,f"{product.sku} / {snapshot.unit_cost}")
     return JsonResponse({"item":{"id":snapshot.id,"supplier":supplier.name,"sku":product.sku,"product":product.name,"unit_cost":float(snapshot.unit_cost),"captured_at":snapshot.captured_at.isoformat()}},status=201)
+
+
+def _forecast_for_product(product, demand_totals, window_days, horizon_days):
+    today = timezone.localdate()
+    supplier = product.supplier
+    lead_time_days = supplier.lead_time_days if supplier else 0
+    average_daily = (Decimal(demand_totals.get(product.id, 0)) / Decimal(window_days)).quantize(Decimal("0.01"))
+    safety_stock = max(1, ceil(float(average_daily) * max(2, lead_time_days * 0.5))) if average_daily else 0
+    reorder_point = ceil(float(average_daily) * lead_time_days + safety_stock)
+    available_qty = max(0, product.stock_qty - product.reserved_qty)
+    if average_daily:
+        stockout_days = max(0, int(available_qty / float(average_daily)))
+        projected_stockout = today + timedelta(days=stockout_days)
+    else:
+        stockout_days = None
+        projected_stockout = None
+    recommended_qty = 0
+    if available_qty <= reorder_point:
+        recommended_qty = max(
+            product.reorder_qty,
+            ceil(float(average_daily) * (lead_time_days + horizon_days) + safety_stock - available_qty),
+        )
+    if available_qty <= 0:
+        risk = "out"
+    elif stockout_days is not None and stockout_days <= lead_time_days:
+        risk = "urgent"
+    elif recommended_qty:
+        risk = "watch"
+    else:
+        risk = "healthy"
+    latest = SupplierPriceSnapshot.objects.filter(product=product).order_by("-captured_at").first()
+    unit_cost = Decimal(latest.unit_cost if latest else (product.cost_price or product.price))
+    return {
+        "sku": product.sku,
+        "product": product.name,
+        "supplier": supplier.name if supplier else None,
+        "supplier_id": supplier.id if supplier else None,
+        "stock_qty": product.stock_qty,
+        "reserved_qty": product.reserved_qty,
+        "available_qty": available_qty,
+        "average_daily_demand": float(average_daily),
+        "lead_time_days": lead_time_days,
+        "safety_stock": safety_stock,
+        "reorder_point": reorder_point,
+        "stockout_days": stockout_days,
+        "projected_stockout": projected_stockout.isoformat() if projected_stockout else None,
+        "recommended_qty": recommended_qty,
+        "unit_cost": float(unit_cost),
+        "estimated_cost": float(unit_cost * recommended_qty),
+        "risk": risk,
+    }
+
+
+def _purchase_plan_item(plan):
+    return {
+        "id": plan.id,
+        "plan_id": plan.id,
+        "sku": plan.product.sku,
+        "product": plan.product.name,
+        "supplier": plan.supplier.name,
+        "average_daily_demand": float(plan.average_daily_demand),
+        "window_days": plan.window_days,
+        "horizon_days": plan.horizon_days,
+        "available_qty": plan.available_qty,
+        "safety_stock": plan.safety_stock,
+        "reorder_point": plan.reorder_point,
+        "recommended_qty": plan.recommended_qty,
+        "unit_cost": float(plan.unit_cost),
+        "estimated_cost": float(plan.estimated_cost),
+        "projected_stockout": plan.projected_stockout.isoformat() if plan.projected_stockout else None,
+        "expected_date": plan.expected_date.isoformat() if plan.expected_date else None,
+        "status": plan.status,
+        "po_no": plan.purchase_order.po_no if plan.purchase_order else None,
+        "created_at": plan.created_at.isoformat(),
+    }
+
+
+@csrf_exempt
+@roles_allowed("admin", "manager", "store")
+def demand_planning_view(request):
+    if request.method == "GET":
+        try:
+            window_days = min(365, max(30, int(request.GET.get("window", 90))))
+            horizon_days = min(180, max(7, int(request.GET.get("horizon", 30))))
+        except (TypeError, ValueError):
+            return JsonResponse({"detail": "Window and horizon must be whole numbers"}, status=400)
+        start = timezone.localdate() - timedelta(days=window_days - 1)
+        totals = {
+            row["product_id"]: row["total"] or 0
+            for row in DemandHistory.objects.filter(period_start__gte=start, period_start__lte=timezone.localdate()).values("product_id").annotate(total=Sum("quantity"))
+        }
+        active_plans = {}
+        for plan in PurchasePlan.objects.filter(status__in=["pending", "approved", "ordered"]).select_related("product", "supplier", "purchase_order").order_by("-created_at"):
+            active_plans.setdefault(plan.product_id, plan)
+        items = []
+        for product in Product.objects.select_related("supplier").filter(supplier__isnull=False).order_by("stock_qty", "name"):
+            item = _forecast_for_product(product, totals, window_days, horizon_days)
+            plan = active_plans.get(product.id)
+            if plan:
+                item.update({"plan_id": plan.id, "plan_status": plan.status, "po_no": plan.purchase_order.po_no if plan.purchase_order else None})
+            else:
+                item.update({"plan_id": None, "plan_status": None, "po_no": None})
+            items.append(item)
+        risk_order = {"out": 0, "urgent": 1, "watch": 2, "healthy": 3}
+        items.sort(key=lambda item: (risk_order[item["risk"]], -item["recommended_qty"], item["product"]))
+        supplier_totals = {}
+        for item in items:
+            if not item["recommended_qty"]:
+                continue
+            group = supplier_totals.setdefault(item["supplier"], {"supplier": item["supplier"], "recommended_qty": 0, "estimated_cost": 0, "sku_count": 0})
+            group["recommended_qty"] += item["recommended_qty"]
+            group["estimated_cost"] += item["estimated_cost"]
+            group["sku_count"] += 1
+        summary = {
+            "at_risk": sum(1 for item in items if item["recommended_qty"]),
+            "stockout_soon": sum(1 for item in items if item["stockout_days"] is not None and item["stockout_days"] <= item["lead_time_days"]),
+            "estimated_cost": round(sum(item["estimated_cost"] for item in items), 2),
+            "forecasted_skus": len(items),
+        }
+        return JsonResponse({"window_days": window_days, "horizon_days": horizon_days, "generated_at": timezone.now().isoformat(), "summary": summary, "items": items, "supplier_totals": list(supplier_totals.values())})
+    data = parse_body(request) or {}
+    action = str(data.get("action", "request"))
+    if action == "request":
+        try:
+            product = Product.objects.select_related("supplier").get(sku=str(data["sku"]).strip().upper())
+            if not product.supplier:
+                raise ValueError("Product has no preferred supplier")
+            window_days = min(365, max(30, int(data.get("window_days", 90))))
+            horizon_days = min(180, max(7, int(data.get("horizon_days", 30))))
+            start = timezone.localdate() - timedelta(days=window_days - 1)
+            totals = {product.id: DemandHistory.objects.filter(product=product, period_start__gte=start, period_start__lte=timezone.localdate()).aggregate(total=Sum("quantity"))["total"] or 0}
+            forecast = _forecast_for_product(product, totals, window_days, horizon_days)
+            quantity = max(1, int(data.get("quantity") or forecast["recommended_qty"] or product.reorder_qty))
+            existing = PurchasePlan.objects.filter(product=product, status__in=["pending", "approved", "ordered"]).select_related("product", "supplier", "purchase_order").first()
+            if existing:
+                return JsonResponse({"item": _purchase_plan_item(existing), "detail": "An active purchase plan already exists for this SKU"})
+            expected_date = timezone.localdate() + timedelta(days=product.supplier.lead_time_days)
+            projected_stockout = date.fromisoformat(forecast["projected_stockout"]) if forecast["projected_stockout"] else None
+            plan = PurchasePlan.objects.create(product=product, supplier=product.supplier, average_daily_demand=forecast["average_daily_demand"], window_days=window_days, horizon_days=horizon_days, available_qty=forecast["available_qty"], safety_stock=forecast["safety_stock"], reorder_point=forecast["reorder_point"], recommended_qty=quantity, unit_cost=forecast["unit_cost"], estimated_cost=Decimal(str(forecast["unit_cost"])) * quantity, projected_stockout=projected_stockout, expected_date=expected_date, status="pending", requested_by=request.api_user)
+        except Exception as exc:
+            return JsonResponse({"detail": f"Could not request purchase plan: {exc}"}, status=400)
+        record_audit(request, "request purchase plan", "purchase plan", plan.id, f"{product.sku} / {quantity} units")
+        return JsonResponse({"item": _purchase_plan_item(plan)}, status=201)
+    if action in {"approve", "reject"}:
+        if request.api_user.profile.role not in {"admin", "manager"}:
+            return JsonResponse({"detail": "Only admin or manager can review purchase plans"}, status=403)
+        try:
+            plan = PurchasePlan.objects.select_related("product", "supplier", "purchase_order").get(id=int(data["id"]))
+            if plan.status != "pending":
+                raise ValueError("Only pending plans can be reviewed")
+            if action == "reject":
+                plan.status = "rejected"
+                plan.reviewed_by = request.api_user
+                plan.reviewed_at = timezone.now()
+                plan.save(update_fields=["status", "reviewed_by", "reviewed_at"])
+                record_audit(request, "reject purchase plan", "purchase plan", plan.id, plan.product.sku)
+                return JsonResponse({"item": _purchase_plan_item(plan)})
+            po = PurchaseOrder.objects.create(po_no=f"PO-{timezone.now():%y%m%d}-{uuid4().hex[:4].upper()}", supplier=plan.supplier, status="approved", expected_date=plan.expected_date, total=plan.estimated_cost, created_by=request.api_user)
+            PurchaseOrderItem.objects.create(purchase_order=po, product=plan.product, quantity=plan.recommended_qty, unit_cost=plan.unit_cost)
+            plan.status = "ordered"
+            plan.reviewed_by = request.api_user
+            plan.reviewed_at = timezone.now()
+            plan.purchase_order = po
+            plan.save(update_fields=["status", "reviewed_by", "reviewed_at", "purchase_order"])
+        except Exception as exc:
+            return JsonResponse({"detail": f"Could not review purchase plan: {exc}"}, status=400)
+        record_audit(request, "approve purchase plan", "purchase plan", plan.id, f"{plan.product.sku} / {po.po_no}")
+        return JsonResponse({"item": _purchase_plan_item(plan), "po_no": po.po_no})
+    return JsonResponse({"detail": "Unknown demand planning action"}, status=400)
 
 @csrf_exempt
 @roles_allowed("admin", "manager", "sales")

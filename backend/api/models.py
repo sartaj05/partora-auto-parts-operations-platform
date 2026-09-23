@@ -317,3 +317,40 @@ class AuditLog(models.Model):
     entity_id = models.CharField(max_length=80, blank=True)
     detail = models.CharField(max_length=300, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
+
+
+class DemandHistory(models.Model):
+    SOURCE_CHOICES = [("sales", "Sales history"), ("manual", "Manual import"), ("adjustment", "Stock adjustment")]
+    product = models.ForeignKey(Product, on_delete=models.CASCADE, related_name="demand_history")
+    warehouse = models.ForeignKey(Warehouse, on_delete=models.SET_NULL, null=True, blank=True, related_name="demand_history")
+    period_start = models.DateField()
+    quantity = models.PositiveIntegerField(default=0)
+    source = models.CharField(max_length=20, choices=SOURCE_CHOICES, default="sales")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-period_start"]
+        unique_together = [("product", "warehouse", "period_start")]
+
+
+class PurchasePlan(models.Model):
+    STATUS_CHOICES = [("pending", "Pending approval"), ("approved", "Approved"), ("rejected", "Rejected"), ("ordered", "PO created")]
+    product = models.ForeignKey(Product, on_delete=models.PROTECT, related_name="purchase_plans")
+    supplier = models.ForeignKey(Supplier, on_delete=models.PROTECT, related_name="purchase_plans")
+    average_daily_demand = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    window_days = models.PositiveIntegerField(default=90)
+    horizon_days = models.PositiveIntegerField(default=30)
+    available_qty = models.IntegerField(default=0)
+    safety_stock = models.PositiveIntegerField(default=0)
+    reorder_point = models.PositiveIntegerField(default=0)
+    recommended_qty = models.PositiveIntegerField(default=0)
+    unit_cost = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    estimated_cost = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    projected_stockout = models.DateField(null=True, blank=True)
+    expected_date = models.DateField(null=True, blank=True)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="pending")
+    requested_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name="purchase_plans_requested")
+    reviewed_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name="purchase_plans_reviewed")
+    purchase_order = models.OneToOneField(PurchaseOrder, on_delete=models.SET_NULL, null=True, blank=True, related_name="purchase_plan")
+    created_at = models.DateTimeField(auto_now_add=True)
+    reviewed_at = models.DateTimeField(null=True, blank=True)

@@ -1,4 +1,4 @@
-import { analyticsData, customers, demoAccounts, fitments, fulfillmentState, governanceState, inventory, inventoryControlState, mockDashboard, modulesByRole, portalState, priceRules, purchaseOrders, quotations, reorderSuggestions, returnsState, salesFlow, stock, supplierPerformanceState, suppliers, warehouseState } from '../mock/data'
+import { analyticsData, customers, demandPlanningData, demandPlanningState, demoAccounts, fitments, fulfillmentState, governanceState, inventory, inventoryControlState, mockDashboard, modulesByRole, portalState, priceRules, purchaseOrders, quotations, reorderSuggestions, returnsState, salesFlow, stock, supplierPerformanceState, suppliers, warehouseState } from '../mock/data'
 
 const API_BASE = (import.meta.env.VITE_API_URL || '/api').replace(/\/$/, '')
 const NETWORK_MESSAGE = 'Backend unavailable. Demo mode is active.'
@@ -54,6 +54,7 @@ const fallback = {
   '/purchase-orders/': () => ({ items: purchaseOrders, count: purchaseOrders.length }),
   '/warehouses/': () => warehouseState,
   '/reorder/': () => ({ items: reorderSuggestions(), count: reorderSuggestions().length }),
+  '/demand-planning/': () => demandPlanningData(),
   '/sales-flow/': () => salesFlow,
   '/fulfillment/': () => fulfillmentState,
   '/returns/': () => returnsState,
@@ -131,6 +132,22 @@ function createMock(path, payload, role) {
   }
   if (path === '/supplier-performance/') {
     const product=inventory.find(x=>x.sku===String(payload.sku||'').toUpperCase());const supplier=suppliers.find(x=>x.name===payload.supplier);if(!product||!supplier)throw new Error('Supplier or SKU not found');const item={id:Date.now(),supplier:supplier.name,sku:product.sku,product:product.name,unit_cost:Number(payload.unit_cost||product.cost_price||product.price),captured_at:new Date().toISOString()};supplierPerformanceState.prices.unshift(item);return {item}
+  }
+  if (path === '/demand-planning/') {
+    const product = inventory.find(x => x.sku === String(payload.sku || '').toUpperCase())
+    if (payload.action === 'request') {
+      if (!product) throw new Error('SKU not found')
+      const existing = demandPlanningState.plans.find(x => x.sku === product.sku && ['pending', 'approved', 'ordered'].includes(x.status))
+      if (existing) return { item: existing }
+      const item = { id:Date.now(), plan_id:Date.now(), sku:product.sku, product:product.name, supplier:product.supplier, average_daily_demand:0, window_days:90, horizon_days:30, available_qty:product.stock_qty, safety_stock:product.reorder_level, reorder_point:product.reorder_level, recommended_qty:Number(payload.quantity || product.reorder_qty || 25), unit_cost:product.cost_price || product.price, estimated_cost:Number(payload.quantity || product.reorder_qty || 25) * (product.cost_price || product.price), projected_stockout:null, expected_date:null, status:'pending' }
+      demandPlanningState.plans.unshift(item)
+      return { item }
+    }
+    const item = demandPlanningState.plans.find(x => x.id === Number(payload.id))
+    if (!item) throw new Error('Purchase plan not found')
+    if (payload.action === 'approve') { item.status = 'ordered'; item.po_no = `PO-FORECAST-${String(Date.now()).slice(-4)}` }
+    if (payload.action === 'reject') item.status = 'rejected'
+    return { item }
   }
   if (path === '/portal/issue/') {
     const customer=customers.find(x=>x.id===Number(payload.customer_id));if(!customer)throw new Error('Customer not found');const token=`demo-${customer.id}-${Date.now()}`;const data={token,customer:{id:customer.id,name:customer.name,company:customer.company,email:customer.email},quotes:quotations.filter(q=>q.customer_company===customer.company).map(q=>({...q})),orders:salesFlow.orders.filter(o=>o.customer_company===customer.company).map(o=>({...o,fulfillment_status:o.status})),invoices:[]};portalState.tokens[token]=data;return {item:{token,customer:customer.company||customer.name,expires_at:new Date(Date.now()+30*86400000).toISOString(),portal_path:`/portal/${token}`},portal:data}

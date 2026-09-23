@@ -16,6 +16,7 @@ urlpatterns = [
     path("purchase-orders/", views.purchase_orders_view),
     path("warehouses/", views.warehouses_view),
     path("reorder/", views.reorder_view),
+    path("demand-planning/", views.demand_planning_view),
     path("sales-flow/", views.sales_flow_view),
     path("fulfillment/", views.fulfillment_view),
     path("returns/", views.returns_view),

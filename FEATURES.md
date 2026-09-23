@@ -1,6 +1,6 @@
 # Partora Enhanced Feature Set
 
-The enhanced demo adds ten operational modules on top of the original inventory, quotations, suppliers and stock foundation.
+The enhanced demo adds operational modules on top of the original inventory, quotations, suppliers and stock foundation.
 
 1. **Barcode / QR inventory** — assign internal or external codes, scan/search by code or SKU, and print labels.
 2. **Vehicle compatibility** — map SKUs to make, model, year range, variant, engine and OEM reference.
@@ -17,13 +17,14 @@ The enhanced demo adds ten operational modules on top of the original inventory,
 13. **Inventory control** — compare on-hand versus reserved units, submit cycle counts, approve variances and attach lot/serial traceability.
 14. **Supplier performance** — measure PO delivery timing, fill rate, lead time, price snapshots and shortage planning.
 15. **Customer portal** — issue expiring share links so customers can review quotes, approve work, see orders/invoices and request repeats.
+16. **Demand forecasting & purchase planning** — calculate demand velocity, stock-out risk, safety stock, supplier-level spend and manager-approved replenishment plans.
 
 ## Role access
 
 - **Admin**: all modules.
 - **Manager**: all operational, commercial, reporting and approval modules.
 - **Sales**: inventory, barcodes, fitments, quotations, sales flow, CRM, pricing, analytics and governance inbox.
-- **Store**: inventory, stock, barcodes, fitments, purchase orders, warehouses, reorder and governance inbox.
+- **Store**: inventory, stock, barcodes, fitments, purchase orders, warehouses, reorder, demand planning and governance inbox.
 
 ## Demo resilience
 
