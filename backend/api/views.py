@@ -23,6 +23,7 @@ ROLE_MODULES = {
 for _role in ROLE_MODULES:
     if "customer_service" not in ROLE_MODULES[_role]:
         ROLE_MODULES[_role].append("customer_service")
+    ROLE_MODULES[_role].append("saas_billing") if "saas_billing" not in ROLE_MODULES[_role] else None
 
 def parse_body(request):
     try:
@@ -499,6 +500,18 @@ def fleet_view(request):
     if request.method == "GET":
         return JsonResponse({"vehicles":[{"id":1,"registration":"DL 01 AB 2488","customer":"Rapid Fleet Care","make":"Tata","model":"Ace Gold","year":2022,"mileage":68240,"next_service":"2026-10-04","status":"due_soon"},{"id":2,"registration":"HR 26 CX 9012","customer":"Northline Repairs","make":"Hyundai","model":"i20","year":2023,"mileage":42110,"next_service":"2026-11-18","status":"healthy"},{"id":3,"registration":"DL 04 MK 7761","customer":"Metro Garage","make":"Maruti Suzuki","model":"Swift","year":2020,"mileage":88700,"next_service":"2026-09-28","status":"overdue"}],"work_orders":[{"id":1,"order_no":"WO-260923-018","registration":"DL 01 AB 2488","customer":"Rapid Fleet Care","technician":"Ravi Kumar","status":"scheduled","due_date":"2026-10-04","parts_value":4850,"labor_value":1800,"notes":"Replace brake pads and oil filter"},{"id":2,"order_no":"WO-260921-014","registration":"DL 04 MK 7761","customer":"Metro Garage","technician":"Sana Iqbal","status":"in_progress","due_date":"2026-09-28","parts_value":7200,"labor_value":2200,"notes":"Full service and headlamp diagnosis"}],"reminders":[{"id":1,"type":"service_due","title":"Service due in 11 days","detail":"DL 01 AB 2488 · Rapid Fleet Care","status":"queued"},{"id":2,"type":"overdue","title":"Service overdue","detail":"DL 04 MK 7761 · Metro Garage","status":"urgent"}]})
     data=parse_body(request) or {}; action=str(data.get("action","work_order")); item={"id":uuid4().hex[:8],"order_no":f"WO-{timezone.now():%y%m%d}-{uuid4().hex[:3].upper()}","registration":data.get("registration"),"customer":data.get("customer"),"technician":data.get("technician"),"status":"scheduled","due_date":data.get("due_date"),"parts_value":float(data.get("parts_value",0) or 0),"labor_value":float(data.get("labor_value",0) or 0),"notes":data.get("notes","")}; record_audit(request,"fleet work order","fleet",item["id"],action); return JsonResponse({"item":item},status=201)
+
+@csrf_exempt
+@roles_allowed("admin", "manager", "store")
+def saas_billing_view(request):
+    plans=[{"id":"starter","name":"Starter","price":4999,"users":5,"branches":1,"api_calls":10000},{"id":"growth","name":"Growth","price":14999,"users":25,"branches":5,"api_calls":100000},{"id":"scale","name":"Scale","price":39999,"users":100,"branches":20,"api_calls":1000000}]
+    tenants=[{"id":1,"organization":"Partora Auto Parts India","plan":"Growth","status":"active","renewal":"2026-10-01","seats_used":12,"seats_limit":25,"usage":68,"mrr":14999},{"id":2,"organization":"Northline Repairs","plan":"Starter","status":"trial","renewal":"2026-09-30","seats_used":3,"seats_limit":5,"usage":42,"mrr":0},{"id":3,"organization":"Rapid Fleet Care","plan":"Scale","status":"past_due","renewal":"2026-09-25","seats_used":64,"seats_limit":100,"usage":84,"mrr":39999}]
+    if request.method == "GET": return JsonResponse({"summary":{"mrr":148500,"active_tenants":12,"trial_tenants":3,"failed_payments":1},"plans":plans,"tenants":tenants,"invoices":[{"id":1,"invoice_no":"SUB-INV-2609-0012","organization":"Partora Auto Parts India","amount":14999,"due":"2026-10-01","status":"scheduled"},{"id":2,"invoice_no":"SUB-INV-2609-0009","organization":"Rapid Fleet Care","amount":39999,"due":"2026-09-25","status":"past_due"}]})
+    data=parse_body(request) or {}; action=str(data.get("action","plan")); item={"id":data.get("id"),"status":"scheduled"}
+    if action == "plan": item={"id":data.get("id"),"plan":str(data.get("plan","Growth")),"status":"active","mrr":float(data.get("mrr",14999) or 0)}
+    if action == "retry": item={"id":data.get("id"),"status":"scheduled"}
+    if action == "invoice": item={"id":uuid4().hex[:8],"invoice_no":f"SUB-{timezone.now():%y%m%d}-{uuid4().hex[:3].upper()}","organization":str(data.get("organization","Partora Auto Parts India")),"amount":float(data.get("amount",14999) or 0),"due":str(data.get("due",timezone.localdate().isoformat())),"status":"scheduled"}
+    record_audit(request,"subscription billing action","tenant",item["id"],action); return JsonResponse({"item":item},status=201 if action=="invoice" else 200)
 
 @csrf_exempt
 @roles_allowed("admin", "manager", "store")

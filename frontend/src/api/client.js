@@ -1,4 +1,4 @@
-import { analyticsData, automationState, copilotState, customerServiceState, customers, deliveryState, demandPlanningData, demandPlanningState, demoAccounts, documentState, financeState, fitments, fleetState, fulfillmentState, governanceState, integrationsState, inventory, inventoryControlState, mockDashboard, mobileWarehouseState, modulesByRole, notificationState, partnerApiState, portalState, predictiveFleetState, priceRules, pwaState, purchaseOrders, quotations, receivingState, reorderSuggestions, returnsState, rfqState, salesFlow, securityState, stock, supplierPerformanceState, suppliers, tenantState, vinVehicles, warehouseState, warrantyState } from '../mock/data'
+import { analyticsData, automationState, billingState, copilotState, customerServiceState, customers, deliveryState, demandPlanningData, demandPlanningState, demoAccounts, documentState, financeState, fitments, fleetState, fulfillmentState, governanceState, integrationsState, inventory, inventoryControlState, mockDashboard, mobileWarehouseState, modulesByRole, notificationState, partnerApiState, portalState, predictiveFleetState, priceRules, pwaState, purchaseOrders, quotations, receivingState, reorderSuggestions, returnsState, rfqState, salesFlow, securityState, stock, supplierPerformanceState, suppliers, tenantState, vinVehicles, warehouseState, warrantyState } from '../mock/data'
 
 const API_BASE = (import.meta.env.VITE_API_URL || '/api').replace(/\/$/, '')
 const NETWORK_MESSAGE = 'Backend unavailable. Demo mode is active.'
@@ -82,6 +82,7 @@ const fallback = {
   '/partner-api/': () => partnerApiState,
   '/predictive-fleet/': () => predictiveFleetState,
   '/customer-service/': () => customerServiceState,
+  '/saas-billing/': () => billingState,
 }
 
 export async function loadEndpoint(path, role) {
@@ -117,6 +118,11 @@ function createMock(path, payload, role) {
   if (path === '/customer-service/') {
     if (payload.action === 'ticket') { const item={id,ticket_no:`CS-DEMO-${String(id).slice(-5)}`,customer:payload.customer||'New customer',subject:payload.subject||'New support request',channel:payload.channel||'portal',priority:payload.priority||'normal',status:'open',assignee:payload.assignee||'Unassigned',sla_due:payload.sla_due||'2026-09-24 12:00',last_message:payload.message||'Ticket created from the operations desk.',messages:1}; customerServiceState.tickets.unshift(item); customerServiceState.summary.open_tickets+=1; return {item} }
     const item=customerServiceState.tickets.find(x=>x.id===Number(payload.id)); if(!item)throw new Error('Support ticket not found'); if(payload.action==='status')item.status=payload.status||item.status; if(payload.action==='assign')item.assignee=payload.assignee||item.assignee; if(payload.message){item.messages+=1;item.last_message=payload.message;customerServiceState.communications.unshift({id:Date.now(),ticket_no:item.ticket_no,actor:'Demo User',channel:payload.channel||'internal',message:payload.message,created_at:new Date().toISOString()})} return {item}
+  }
+  if (path === '/saas-billing/') {
+    if (payload.action === 'plan') { const tenant=billingState.tenants.find(x=>x.id===Number(payload.id)); if(!tenant)throw new Error('Tenant not found'); tenant.plan=payload.plan; tenant.status='active'; tenant.mrr=billingState.plans.find(x=>x.name===payload.plan)?.price||tenant.mrr; return {item:tenant} }
+    if (payload.action === 'retry') { const invoice=billingState.invoices.find(x=>x.id===Number(payload.id)); if(!invoice)throw new Error('Subscription invoice not found'); invoice.status='scheduled'; return {item:invoice} }
+    if (payload.action === 'invoice') { const item={id,invoice_no:`SUB-DEMO-${String(id).slice(-5)}`,organization:payload.organization||'Partora Auto Parts India',amount:Number(payload.amount||14999),due:payload.due||'2026-10-01',status:'scheduled'}; billingState.invoices.unshift(item); return {item} }
   }
   if (path === '/security/') {
     if (payload.action === 'mfa') { const item=securityState.users.find(x=>x.id===Number(payload.id)); if(!item)throw new Error('User not found'); item.mfa='enabled'; item.risk='low'; return {item} }

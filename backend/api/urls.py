@@ -37,6 +37,7 @@ urlpatterns = [
     path("partner-api/", views.partner_api_view),
     path("predictive-fleet/", views.predictive_fleet_view),
     path("customer-service/", views.customer_service_view),
+    path("saas-billing/", views.saas_billing_view),
     path("returns/", views.returns_view),
     path("inventory-control/", views.inventory_control_view),
     path("supplier-performance/", views.supplier_performance_view),

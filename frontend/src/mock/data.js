@@ -12,6 +12,10 @@ export const modulesByRole = {
   store: ['dashboard', 'inventory', 'stock', 'barcodes', 'fitments', 'purchase_orders', 'receiving', 'mobile_warehouse', 'warehouses', 'reorder', 'demand_planning', 'rfq', 'fulfillment', 'notifications', 'copilot', 'warranty_intelligence', 'pwa_admin', 'automation', 'fleet', 'security', 'documents', 'delivery', 'predictive_fleet', 'customer_service', 'governance'],
 }
 
+Object.keys(modulesByRole).forEach(role => {
+  if (!modulesByRole[role].includes('saas_billing')) modulesByRole[role].push('saas_billing')
+})
+
 export const inventory = [
   { id: 1, sku: 'BRK-1048', name: 'Ceramic Brake Pad Set', brand: 'RoadShield', category: 'auto', supplier: 'TorqueLine Components', price: 2450, cost_price: 1519, wholesale_price: 2156, dealer_price: 2009, stock_qty: 38, reorder_level: 12, reorder_qty: 30, stock_status: 'healthy', bin_location: 'A-04-12', barcode: '890100010481' },
   { id: 2, sku: 'FLT-2210', name: 'Engine Oil Filter', brand: 'MotoPure', category: 'auto', supplier: 'TorqueLine Components', price: 420, cost_price: 260, wholesale_price: 370, dealer_price: 344, stock_qty: 8, reorder_level: 15, reorder_qty: 40, stock_status: 'low', bin_location: 'A-02-03', barcode: '890100022102' },
@@ -328,4 +332,11 @@ export const customerServiceState = {
   summary: { open_tickets: 8, overdue_sla: 2, avg_response_hours: 1.8, csat: 94 },
   tickets: [{ id:1, ticket_no:'CS-260923-104', customer:'Northline Repairs', subject:'Brake pad fitment question', channel:'dealer_portal', priority:'high', status:'open', assignee:'Meera Manager', sla_due:'2026-09-23 15:30', last_message:'Customer shared vehicle registration and installation photos.', messages:3 },{ id:2, ticket_no:'CS-260923-101', customer:'Rapid Fleet Care', subject:'Shipment arrived with missing relay', channel:'whatsapp', priority:'urgent', status:'escalated', assignee:'Rohan Sales', sla_due:'2026-09-23 13:00', last_message:'Dispatch exception needs replacement approval.', messages:5 },{ id:3, ticket_no:'CS-260922-098', customer:'Metro Garage', subject:'Request repeat quotation', channel:'email', priority:'normal', status:'pending_customer', assignee:'Kabir Store', sla_due:'2026-09-24 10:00', last_message:'Quote QT-260921-104 sent for confirmation.', messages:2 }],
   communications: [{ id:1, ticket_no:'CS-260923-104', actor:'Meera Manager', channel:'email', message:'Requested VIN and installation photos.', created_at:'2026-09-23T09:35:00+05:30' },{ id:2, ticket_no:'CS-260923-101', actor:'Rohan Sales', channel:'whatsapp', message:'Escalated missing-item claim to dispatch.', created_at:'2026-09-23T09:18:00+05:30' }],
+}
+
+export const billingState = {
+  summary: { mrr: 148500, active_tenants: 12, trial_tenants: 3, failed_payments: 1 },
+  plans: [{ id:'starter', name:'Starter', price:4999, users:5, branches:1, api_calls:10000, color:'slate' },{ id:'growth', name:'Growth', price:14999, users:25, branches:5, api_calls:100000, color:'green' },{ id:'scale', name:'Scale', price:39999, users:100, branches:20, api_calls:1000000, color:'gold' }],
+  tenants: [{ id:1, organization:'Partora Auto Parts India', plan:'Growth', status:'active', renewal:'2026-10-01', seats_used:12, seats_limit:25, usage:68, mrr:14999 },{ id:2, organization:'Northline Repairs', plan:'Starter', status:'trial', renewal:'2026-09-30', seats_used:3, seats_limit:5, usage:42, mrr:0 },{ id:3, organization:'Rapid Fleet Care', plan:'Scale', status:'past_due', renewal:'2026-09-25', seats_used:64, seats_limit:100, usage:84, mrr:39999 }],
+  invoices: [{ id:1, invoice_no:'SUB-INV-2609-0012', organization:'Partora Auto Parts India', amount:14999, due:'2026-10-01', status:'scheduled' },{ id:2, invoice_no:'SUB-INV-2609-0009', organization:'Rapid Fleet Care', amount:39999, due:'2026-09-25', status:'past_due' }],
 }

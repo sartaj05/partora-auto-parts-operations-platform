@@ -226,3 +226,8 @@ class DemandPlanningApiTests(TestCase):
         response = self.client.get("/api/customer-service/", **self.auth_headers(self.manager))
         self.assertEqual(response.status_code, 200)
         self.assertIn("tickets", response.json())
+
+    def test_saas_billing_endpoint_is_available(self):
+        response = self.client.get("/api/saas-billing/", **self.auth_headers(self.manager))
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("tenants", response.json())
