@@ -236,3 +236,8 @@ class DemandPlanningApiTests(TestCase):
         response = self.client.get("/api/observability/", **self.auth_headers(self.manager))
         self.assertEqual(response.status_code, 200)
         self.assertIn("services", response.json())
+
+    def test_inventory_network_endpoint_is_available(self):
+        response = self.client.get("/api/inventory-network/", **self.auth_headers(self.manager))
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("recommendations", response.json())

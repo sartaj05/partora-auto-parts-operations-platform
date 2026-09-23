@@ -4,12 +4,13 @@ import { createEndpoint, loadEndpoint } from '../api/client'
 import { useAuth } from '../context/AuthContext'
 import CreateModal from '../components/CreateModal'
 import StatusBadge from '../components/StatusBadge'
-import { BarcodePage, VinFitmentPage, MobileWarehousePage, PurchaseOrdersPage, ReceivingPage, WarehouseControlPage, WarehousesPage, ReorderPage, DemandPlanningPage, RFQPage, SalesFlowPage, FulfillmentPage, NotificationsPage, CopilotPage, FinancePage, WarrantyIntelligencePage, ReturnsPage, InventoryControlPage, SupplierIntelligencePage, DealerPortalPage, PortalPage, CustomersPage, PricingPage, CommandCenterPage, GovernancePage, IntegrationsPage, PwaAdminPage, TenancyPage, AutomationPage, FleetPage, SecurityPage, DocumentsPage, DeliveryPage, PartnerApiPage, PredictiveFleetPage, CustomerServicePage, SaasBillingPage, ObservabilityPage } from './OperationsPages'
+import { BarcodePage, VinFitmentPage, MobileWarehousePage, PurchaseOrdersPage, ReceivingPage, WarehouseControlPage, WarehousesPage, ReorderPage, DemandPlanningPage, RFQPage, SalesFlowPage, FulfillmentPage, NotificationsPage, CopilotPage, FinancePage, WarrantyIntelligencePage, ReturnsPage, InventoryControlPage, SupplierIntelligencePage, DealerPortalPage, PortalPage, CustomersPage, PricingPage, CommandCenterPage, GovernancePage, IntegrationsPage, PwaAdminPage, TenancyPage, AutomationPage, FleetPage, SecurityPage, DocumentsPage, DeliveryPage, PartnerApiPage, PredictiveFleetPage, CustomerServicePage, SaasBillingPage, ObservabilityPage, InventoryNetworkPage } from './OperationsPages'
 
 const nav = [
   ['customer_service','/app/customer-service','Customer service','?'],
   ['saas_billing','/app/saas-billing','SaaS billing','$'],
   ['observability','/app/observability','Reliability','~'],
+  ['inventory_network','/app/inventory-network','Network planning','<>'],
   ['security','/app/security','Security center','!'],
   ['documents','/app/documents','AI documents','+'],
   ['delivery','/app/delivery','Delivery & POD','>'],
@@ -219,6 +220,7 @@ export default function DashboardPage(){
     <Route path="customer-service" element={<Allowed module="customer_service"><CustomerServicePage/></Allowed>}/>
     <Route path="saas-billing" element={<Allowed module="saas_billing"><SaasBillingPage/></Allowed>}/>
     <Route path="observability" element={<Allowed module="observability"><ObservabilityPage/></Allowed>}/>
+    <Route path="inventory-network" element={<Allowed module="inventory_network"><InventoryNetworkPage/></Allowed>}/>
     <Route path="returns" element={<Allowed module="returns"><ReturnsPage/></Allowed>}/>
     <Route path="inventory-control" element={<Allowed module="inventory_control"><InventoryControlPage/></Allowed>}/>
     <Route path="supplier-performance" element={<Allowed module="supplier_performance"><SupplierIntelligencePage/></Allowed>}/>

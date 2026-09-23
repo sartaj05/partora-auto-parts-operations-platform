@@ -15,6 +15,7 @@ export const modulesByRole = {
 Object.keys(modulesByRole).forEach(role => {
   if (!modulesByRole[role].includes('saas_billing')) modulesByRole[role].push('saas_billing')
   if (!modulesByRole[role].includes('observability')) modulesByRole[role].push('observability')
+  if (!modulesByRole[role].includes('inventory_network')) modulesByRole[role].push('inventory_network')
 })
 
 export const inventory = [
@@ -348,4 +349,11 @@ export const observabilityState = {
   jobs: [{ id:1, name:'Supplier webhook delivery', queue:'integrations', status:'failed', last_run:'2026-09-23T09:36:00+05:30', retries:3, detail:'Shiprocket webhook returned 503' },{ id:2, name:'Daily finance export', queue:'reports', status:'completed', last_run:'2026-09-23T08:00:00+05:30', retries:0, detail:'CSV export delivered to admin@partora.demo' },{ id:3, name:'PWA sync reconciliation', queue:'mobile', status:'retrying', last_run:'2026-09-23T09:40:00+05:30', retries:1, detail:'One device conflict awaiting review' }],
   incidents: [{ id:1, incident_no:'INC-260923-03', title:'Shipping webhook degradation', severity:'medium', status:'investigating', owner:'Platform team', started_at:'2026-09-23T09:36:00+05:30', updates:3 }],
   errors: [{ id:1, route:'/api/integrations/', code:'503', count:8, last_seen:'2026-09-23T09:36:00+05:30' },{ id:2, route:'/api/pwa-admin/', code:'409', count:1, last_seen:'2026-09-23T09:40:00+05:30' }],
+}
+
+export const inventoryNetworkState = {
+  summary: { network_units: 1128, imbalance_value: 284000, overstock_skus: 7, service_level: 93.6 },
+  branches: [{ id:1, code:'DEL-MAIN', name:'Delhi Main Warehouse', service_level:96, capacity:78, stock_value:682000, demand_index:112 },{ id:2, code:'GUR-SAT', name:'Gurugram Satellite Store', service_level:91, capacity:71, stock_value:248000, demand_index:128 },{ id:3, code:'NOI-NTH', name:'Noida North Store', service_level:88, capacity:89, stock_value:198000, demand_index:74 }],
+  recommendations: [{ id:1, sku:'RLY-24V4', product:'24V 4-Pin Automotive Relay', from:'DEL-MAIN', to:'GUR-SAT', quantity:18, reason:'Gurugram demand exceeds available stock', value:3240, status:'recommended' },{ id:2, sku:'BLT-0812', product:'Hex Bolt M8 × 20 mm', from:'NOI-NTH', to:'DEL-MAIN', quantity:120, reason:'Noida overstock above 90-day cover', value:1440, status:'recommended' },{ id:3, sku:'BRG-6204', product:'Deep Groove Bearing 6204', from:'DEL-MAIN', to:'NOI-NTH', quantity:10, reason:'Protect Noida service-level target', value:3100, status:'approved' }],
+  stock_risks: [{ id:1, sku:'RLY-24V4', product:'24V 4-Pin Automotive Relay', branch:'GUR-SAT', on_hand:0, target:16, cover_days:0, risk:'stockout' },{ id:2, sku:'BLT-0812', product:'Hex Bolt M8 × 20 mm', branch:'NOI-NTH', on_hand:640, target:120, cover_days:142, risk:'overstock' },{ id:3, sku:'BRG-6204', product:'Deep Groove Bearing 6204', branch:'NOI-NTH', on_hand:5, target:18, cover_days:4, risk:'low_cover' }],
 }

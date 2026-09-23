@@ -1,4 +1,4 @@
-import { analyticsData, automationState, billingState, copilotState, customerServiceState, customers, deliveryState, demandPlanningData, demandPlanningState, demoAccounts, documentState, financeState, fitments, fleetState, fulfillmentState, governanceState, integrationsState, inventory, inventoryControlState, mockDashboard, mobileWarehouseState, modulesByRole, notificationState, observabilityState, partnerApiState, portalState, predictiveFleetState, priceRules, pwaState, purchaseOrders, quotations, receivingState, reorderSuggestions, returnsState, rfqState, salesFlow, securityState, stock, supplierPerformanceState, suppliers, tenantState, vinVehicles, warehouseState, warrantyState } from '../mock/data'
+import { analyticsData, automationState, billingState, copilotState, customerServiceState, customers, deliveryState, demandPlanningData, demandPlanningState, demoAccounts, documentState, financeState, fitments, fleetState, fulfillmentState, governanceState, integrationsState, inventory, inventoryControlState, inventoryNetworkState, mockDashboard, mobileWarehouseState, modulesByRole, notificationState, observabilityState, partnerApiState, portalState, predictiveFleetState, priceRules, pwaState, purchaseOrders, quotations, receivingState, reorderSuggestions, returnsState, rfqState, salesFlow, securityState, stock, supplierPerformanceState, suppliers, tenantState, vinVehicles, warehouseState, warrantyState } from '../mock/data'
 
 const API_BASE = (import.meta.env.VITE_API_URL || '/api').replace(/\/$/, '')
 const NETWORK_MESSAGE = 'Backend unavailable. Demo mode is active.'
@@ -84,6 +84,7 @@ const fallback = {
   '/customer-service/': () => customerServiceState,
   '/saas-billing/': () => billingState,
   '/observability/': () => observabilityState,
+  '/inventory-network/': () => inventoryNetworkState,
 }
 
 export async function loadEndpoint(path, role) {
@@ -128,6 +129,9 @@ function createMock(path, payload, role) {
   if (path === '/observability/') {
     if (payload.action === 'retry') { const item=observabilityState.jobs.find(x=>x.id===Number(payload.id)); if(!item)throw new Error('Job not found'); item.status='completed'; item.retries+=1; item.detail='Retry completed successfully'; return {item} }
     if (payload.action === 'resolve') { const item=observabilityState.incidents.find(x=>x.id===Number(payload.id)); if(!item)throw new Error('Incident not found'); item.status='resolved'; observabilityState.summary.open_incidents=Math.max(0,observabilityState.summary.open_incidents-1); return {item} }
+  }
+  if (path === '/inventory-network/') {
+    const item=inventoryNetworkState.recommendations.find(x=>x.id===Number(payload.id)); if(!item)throw new Error('Transfer recommendation not found'); if(payload.action==='approve')item.status='approved'; if(payload.action==='dismiss')item.status='dismissed'; return {item}
   }
   if (path === '/security/') {
     if (payload.action === 'mfa') { const item=securityState.users.find(x=>x.id===Number(payload.id)); if(!item)throw new Error('User not found'); item.mfa='enabled'; item.risk='low'; return {item} }
