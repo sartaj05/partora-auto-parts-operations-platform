@@ -21,6 +21,7 @@ The repository is intentionally built in reviewable feature commits. The ten req
 | `ce3163a` | Five-feature client showcase with VIN, dealer, warehouse, supplier and command-center demos |
 | `97dcc5d` | Mobile warehouse, notifications, copilot, finance and warranty intelligence suite |
 | `cbd2090` | Integrations hub, production PWA controls, multi-tenant permissions, workflow automation and fleet maintenance suite |
+| `21e7f3f` | Security and compliance, AI document processing, delivery/POD, partner API and predictive fleet suite |
 
 The earlier repository history is also preserved, including the original landing page, login, role-aware dashboard, Django API foundation, offline demo mode and deployment setup.
 
