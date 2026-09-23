@@ -20,6 +20,10 @@ ROLE_MODULES = {
     "store": ["dashboard", "inventory", "stock", "barcodes", "fitments", "purchase_orders", "receiving", "mobile_warehouse", "warehouses", "reorder", "demand_planning", "rfq", "sales_flow", "fulfillment", "notifications", "copilot", "warranty_intelligence", "pwa_admin", "automation", "fleet", "security", "documents", "delivery", "predictive_fleet", "returns", "inventory_control", "supplier_performance", "governance"],
 }
 
+for _role in ROLE_MODULES:
+    if "customer_service" not in ROLE_MODULES[_role]:
+        ROLE_MODULES[_role].append("customer_service")
+
 def parse_body(request):
     try:
         return json.loads(request.body or "{}")
@@ -495,6 +499,15 @@ def fleet_view(request):
     if request.method == "GET":
         return JsonResponse({"vehicles":[{"id":1,"registration":"DL 01 AB 2488","customer":"Rapid Fleet Care","make":"Tata","model":"Ace Gold","year":2022,"mileage":68240,"next_service":"2026-10-04","status":"due_soon"},{"id":2,"registration":"HR 26 CX 9012","customer":"Northline Repairs","make":"Hyundai","model":"i20","year":2023,"mileage":42110,"next_service":"2026-11-18","status":"healthy"},{"id":3,"registration":"DL 04 MK 7761","customer":"Metro Garage","make":"Maruti Suzuki","model":"Swift","year":2020,"mileage":88700,"next_service":"2026-09-28","status":"overdue"}],"work_orders":[{"id":1,"order_no":"WO-260923-018","registration":"DL 01 AB 2488","customer":"Rapid Fleet Care","technician":"Ravi Kumar","status":"scheduled","due_date":"2026-10-04","parts_value":4850,"labor_value":1800,"notes":"Replace brake pads and oil filter"},{"id":2,"order_no":"WO-260921-014","registration":"DL 04 MK 7761","customer":"Metro Garage","technician":"Sana Iqbal","status":"in_progress","due_date":"2026-09-28","parts_value":7200,"labor_value":2200,"notes":"Full service and headlamp diagnosis"}],"reminders":[{"id":1,"type":"service_due","title":"Service due in 11 days","detail":"DL 01 AB 2488 · Rapid Fleet Care","status":"queued"},{"id":2,"type":"overdue","title":"Service overdue","detail":"DL 04 MK 7761 · Metro Garage","status":"urgent"}]})
     data=parse_body(request) or {}; action=str(data.get("action","work_order")); item={"id":uuid4().hex[:8],"order_no":f"WO-{timezone.now():%y%m%d}-{uuid4().hex[:3].upper()}","registration":data.get("registration"),"customer":data.get("customer"),"technician":data.get("technician"),"status":"scheduled","due_date":data.get("due_date"),"parts_value":float(data.get("parts_value",0) or 0),"labor_value":float(data.get("labor_value",0) or 0),"notes":data.get("notes","")}; record_audit(request,"fleet work order","fleet",item["id"],action); return JsonResponse({"item":item},status=201)
+
+@csrf_exempt
+@roles_allowed("admin", "manager", "store")
+def customer_service_view(request):
+    tickets=[{"id":1,"ticket_no":"CS-260923-104","customer":"Northline Repairs","subject":"Brake pad fitment question","channel":"dealer_portal","priority":"high","status":"open","assignee":"Meera Manager","sla_due":"2026-09-23 15:30","last_message":"Customer shared vehicle registration and installation photos.","messages":3},{"id":2,"ticket_no":"CS-260923-101","customer":"Rapid Fleet Care","subject":"Shipment arrived with missing relay","channel":"whatsapp","priority":"urgent","status":"escalated","assignee":"Rohan Sales","sla_due":"2026-09-23 13:00","last_message":"Dispatch exception needs replacement approval.","messages":5},{"id":3,"ticket_no":"CS-260922-098","customer":"Metro Garage","subject":"Request repeat quotation","channel":"email","priority":"normal","status":"pending_customer","assignee":"Kabir Store","sla_due":"2026-09-24 10:00","last_message":"Quote sent for confirmation.","messages":2}]
+    if request.method == "GET": return JsonResponse({"summary":{"open_tickets":8,"overdue_sla":2,"avg_response_hours":1.8,"csat":94},"tickets":tickets,"communications":[{"id":1,"ticket_no":"CS-260923-104","actor":"Meera Manager","channel":"email","message":"Requested VIN and installation photos.","created_at":timezone.now().isoformat()},{"id":2,"ticket_no":"CS-260923-101","actor":"Rohan Sales","channel":"whatsapp","message":"Escalated missing-item claim to dispatch.","created_at":(timezone.now()-timedelta(minutes=20)).isoformat()}]})
+    data=parse_body(request) or {}; action=str(data.get("action","ticket")); item={"id":uuid4().hex[:8],"ticket_no":f"CS-{timezone.now():%y%m%d}-{uuid4().hex[:3].upper()}","customer":str(data.get("customer","New customer")),"subject":str(data.get("subject","New support request")),"channel":str(data.get("channel","portal")),"priority":str(data.get("priority","normal")),"status":"open","assignee":str(data.get("assignee","Unassigned")),"sla_due":str(data.get("sla_due","2026-09-24 12:00")),"last_message":str(data.get("message","Ticket created from the operations desk.")),"messages":1}
+    if action in {"status","assign","message"}: item={"id":data.get("id"),"status":str(data.get("status","open")),"assignee":str(data.get("assignee","Unassigned")),"last_message":str(data.get("message","Support update recorded.")),"messages":2}
+    record_audit(request,"customer service action","ticket",item["id"],action); return JsonResponse({"item":item},status=201 if action=="ticket" else 200)
 
 @csrf_exempt
 @roles_allowed("admin", "manager", "store")

@@ -1,4 +1,4 @@
-import { analyticsData, automationState, copilotState, customers, deliveryState, demandPlanningData, demandPlanningState, demoAccounts, documentState, financeState, fitments, fleetState, fulfillmentState, governanceState, integrationsState, inventory, inventoryControlState, mockDashboard, mobileWarehouseState, modulesByRole, notificationState, partnerApiState, portalState, predictiveFleetState, priceRules, pwaState, purchaseOrders, quotations, receivingState, reorderSuggestions, returnsState, rfqState, salesFlow, securityState, stock, supplierPerformanceState, suppliers, tenantState, vinVehicles, warehouseState, warrantyState } from '../mock/data'
+import { analyticsData, automationState, copilotState, customerServiceState, customers, deliveryState, demandPlanningData, demandPlanningState, demoAccounts, documentState, financeState, fitments, fleetState, fulfillmentState, governanceState, integrationsState, inventory, inventoryControlState, mockDashboard, mobileWarehouseState, modulesByRole, notificationState, partnerApiState, portalState, predictiveFleetState, priceRules, pwaState, purchaseOrders, quotations, receivingState, reorderSuggestions, returnsState, rfqState, salesFlow, securityState, stock, supplierPerformanceState, suppliers, tenantState, vinVehicles, warehouseState, warrantyState } from '../mock/data'
 
 const API_BASE = (import.meta.env.VITE_API_URL || '/api').replace(/\/$/, '')
 const NETWORK_MESSAGE = 'Backend unavailable. Demo mode is active.'
@@ -81,6 +81,7 @@ const fallback = {
   '/delivery/': () => deliveryState,
   '/partner-api/': () => partnerApiState,
   '/predictive-fleet/': () => predictiveFleetState,
+  '/customer-service/': () => customerServiceState,
 }
 
 export async function loadEndpoint(path, role) {
@@ -113,6 +114,10 @@ export async function portalAction(token, payload) {
 
 function createMock(path, payload, role) {
   const id = Date.now()
+  if (path === '/customer-service/') {
+    if (payload.action === 'ticket') { const item={id,ticket_no:`CS-DEMO-${String(id).slice(-5)}`,customer:payload.customer||'New customer',subject:payload.subject||'New support request',channel:payload.channel||'portal',priority:payload.priority||'normal',status:'open',assignee:payload.assignee||'Unassigned',sla_due:payload.sla_due||'2026-09-24 12:00',last_message:payload.message||'Ticket created from the operations desk.',messages:1}; customerServiceState.tickets.unshift(item); customerServiceState.summary.open_tickets+=1; return {item} }
+    const item=customerServiceState.tickets.find(x=>x.id===Number(payload.id)); if(!item)throw new Error('Support ticket not found'); if(payload.action==='status')item.status=payload.status||item.status; if(payload.action==='assign')item.assignee=payload.assignee||item.assignee; if(payload.message){item.messages+=1;item.last_message=payload.message;customerServiceState.communications.unshift({id:Date.now(),ticket_no:item.ticket_no,actor:'Demo User',channel:payload.channel||'internal',message:payload.message,created_at:new Date().toISOString()})} return {item}
+  }
   if (path === '/security/') {
     if (payload.action === 'mfa') { const item=securityState.users.find(x=>x.id===Number(payload.id)); if(!item)throw new Error('User not found'); item.mfa='enabled'; item.risk='low'; return {item} }
     if (payload.action === 'terminate') { const item=securityState.sessions.find(x=>x.id===Number(payload.id)); if(!item)throw new Error('Session not found'); item.status='terminated'; securityState.summary.active_sessions=Math.max(0,securityState.summary.active_sessions-1); return {item} }
