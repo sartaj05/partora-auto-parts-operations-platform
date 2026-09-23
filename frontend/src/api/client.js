@@ -1,4 +1,4 @@
-import { analyticsData, automationState, billingState, copilotState, customerServiceState, customers, deliveryState, demandPlanningData, demandPlanningState, demoAccounts, documentState, financeState, fitments, fleetState, fulfillmentState, governanceState, integrationsState, inventory, inventoryControlState, mockDashboard, mobileWarehouseState, modulesByRole, notificationState, partnerApiState, portalState, predictiveFleetState, priceRules, pwaState, purchaseOrders, quotations, receivingState, reorderSuggestions, returnsState, rfqState, salesFlow, securityState, stock, supplierPerformanceState, suppliers, tenantState, vinVehicles, warehouseState, warrantyState } from '../mock/data'
+import { analyticsData, automationState, billingState, copilotState, customerServiceState, customers, deliveryState, demandPlanningData, demandPlanningState, demoAccounts, documentState, financeState, fitments, fleetState, fulfillmentState, governanceState, integrationsState, inventory, inventoryControlState, mockDashboard, mobileWarehouseState, modulesByRole, notificationState, observabilityState, partnerApiState, portalState, predictiveFleetState, priceRules, pwaState, purchaseOrders, quotations, receivingState, reorderSuggestions, returnsState, rfqState, salesFlow, securityState, stock, supplierPerformanceState, suppliers, tenantState, vinVehicles, warehouseState, warrantyState } from '../mock/data'
 
 const API_BASE = (import.meta.env.VITE_API_URL || '/api').replace(/\/$/, '')
 const NETWORK_MESSAGE = 'Backend unavailable. Demo mode is active.'
@@ -83,6 +83,7 @@ const fallback = {
   '/predictive-fleet/': () => predictiveFleetState,
   '/customer-service/': () => customerServiceState,
   '/saas-billing/': () => billingState,
+  '/observability/': () => observabilityState,
 }
 
 export async function loadEndpoint(path, role) {
@@ -123,6 +124,10 @@ function createMock(path, payload, role) {
     if (payload.action === 'plan') { const tenant=billingState.tenants.find(x=>x.id===Number(payload.id)); if(!tenant)throw new Error('Tenant not found'); tenant.plan=payload.plan; tenant.status='active'; tenant.mrr=billingState.plans.find(x=>x.name===payload.plan)?.price||tenant.mrr; return {item:tenant} }
     if (payload.action === 'retry') { const invoice=billingState.invoices.find(x=>x.id===Number(payload.id)); if(!invoice)throw new Error('Subscription invoice not found'); invoice.status='scheduled'; return {item:invoice} }
     if (payload.action === 'invoice') { const item={id,invoice_no:`SUB-DEMO-${String(id).slice(-5)}`,organization:payload.organization||'Partora Auto Parts India',amount:Number(payload.amount||14999),due:payload.due||'2026-10-01',status:'scheduled'}; billingState.invoices.unshift(item); return {item} }
+  }
+  if (path === '/observability/') {
+    if (payload.action === 'retry') { const item=observabilityState.jobs.find(x=>x.id===Number(payload.id)); if(!item)throw new Error('Job not found'); item.status='completed'; item.retries+=1; item.detail='Retry completed successfully'; return {item} }
+    if (payload.action === 'resolve') { const item=observabilityState.incidents.find(x=>x.id===Number(payload.id)); if(!item)throw new Error('Incident not found'); item.status='resolved'; observabilityState.summary.open_incidents=Math.max(0,observabilityState.summary.open_incidents-1); return {item} }
   }
   if (path === '/security/') {
     if (payload.action === 'mfa') { const item=securityState.users.find(x=>x.id===Number(payload.id)); if(!item)throw new Error('User not found'); item.mfa='enabled'; item.risk='low'; return {item} }

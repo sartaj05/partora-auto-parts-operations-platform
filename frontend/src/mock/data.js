@@ -14,6 +14,7 @@ export const modulesByRole = {
 
 Object.keys(modulesByRole).forEach(role => {
   if (!modulesByRole[role].includes('saas_billing')) modulesByRole[role].push('saas_billing')
+  if (!modulesByRole[role].includes('observability')) modulesByRole[role].push('observability')
 })
 
 export const inventory = [
@@ -339,4 +340,12 @@ export const billingState = {
   plans: [{ id:'starter', name:'Starter', price:4999, users:5, branches:1, api_calls:10000, color:'slate' },{ id:'growth', name:'Growth', price:14999, users:25, branches:5, api_calls:100000, color:'green' },{ id:'scale', name:'Scale', price:39999, users:100, branches:20, api_calls:1000000, color:'gold' }],
   tenants: [{ id:1, organization:'Partora Auto Parts India', plan:'Growth', status:'active', renewal:'2026-10-01', seats_used:12, seats_limit:25, usage:68, mrr:14999 },{ id:2, organization:'Northline Repairs', plan:'Starter', status:'trial', renewal:'2026-09-30', seats_used:3, seats_limit:5, usage:42, mrr:0 },{ id:3, organization:'Rapid Fleet Care', plan:'Scale', status:'past_due', renewal:'2026-09-25', seats_used:64, seats_limit:100, usage:84, mrr:39999 }],
   invoices: [{ id:1, invoice_no:'SUB-INV-2609-0012', organization:'Partora Auto Parts India', amount:14999, due:'2026-10-01', status:'scheduled' },{ id:2, invoice_no:'SUB-INV-2609-0009', organization:'Rapid Fleet Care', amount:39999, due:'2026-09-25', status:'past_due' }],
+}
+
+export const observabilityState = {
+  summary: { uptime: 99.96, api_latency_ms: 184, failed_jobs: 2, open_incidents: 1 },
+  services: [{ id:1, name:'Core API', type:'api', status:'healthy', uptime:99.99, latency:142, requests:8420 },{ id:2, name:'Integration workers', type:'worker', status:'degraded', uptime:99.72, latency:480, requests:1260 },{ id:3, name:'Database', type:'database', status:'healthy', uptime:100, latency:18, requests:0 },{ id:4, name:'Backup storage', type:'backup', status:'healthy', uptime:99.9, latency:0, requests:3 }],
+  jobs: [{ id:1, name:'Supplier webhook delivery', queue:'integrations', status:'failed', last_run:'2026-09-23T09:36:00+05:30', retries:3, detail:'Shiprocket webhook returned 503' },{ id:2, name:'Daily finance export', queue:'reports', status:'completed', last_run:'2026-09-23T08:00:00+05:30', retries:0, detail:'CSV export delivered to admin@partora.demo' },{ id:3, name:'PWA sync reconciliation', queue:'mobile', status:'retrying', last_run:'2026-09-23T09:40:00+05:30', retries:1, detail:'One device conflict awaiting review' }],
+  incidents: [{ id:1, incident_no:'INC-260923-03', title:'Shipping webhook degradation', severity:'medium', status:'investigating', owner:'Platform team', started_at:'2026-09-23T09:36:00+05:30', updates:3 }],
+  errors: [{ id:1, route:'/api/integrations/', code:'503', count:8, last_seen:'2026-09-23T09:36:00+05:30' },{ id:2, route:'/api/pwa-admin/', code:'409', count:1, last_seen:'2026-09-23T09:40:00+05:30' }],
 }
