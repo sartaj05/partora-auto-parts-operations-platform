@@ -19,6 +19,7 @@ The repository is intentionally built in reviewable feature commits. The ten req
 | `1c0e0b7` | Supplier RFQ, quote scoring and manager-approved offer selection |
 | `a6fb9c1` | Goods receipt, damaged-stock handling and three-way supplier invoice matching |
 | `ce3163a` | Five-feature client showcase with VIN, dealer, warehouse, supplier and command-center demos |
+| `97dcc5d` | Mobile warehouse, notifications, copilot, finance and warranty intelligence suite |
 
 The earlier repository history is also preserved, including the original landing page, login, role-aware dashboard, Django API foundation, offline demo mode and deployment setup.
 
