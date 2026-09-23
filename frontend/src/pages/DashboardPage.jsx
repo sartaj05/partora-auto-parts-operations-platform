@@ -4,10 +4,15 @@ import { createEndpoint, loadEndpoint } from '../api/client'
 import { useAuth } from '../context/AuthContext'
 import CreateModal from '../components/CreateModal'
 import StatusBadge from '../components/StatusBadge'
-import { BarcodePage, VinFitmentPage, PurchaseOrdersPage, ReceivingPage, WarehouseControlPage, WarehousesPage, ReorderPage, DemandPlanningPage, RFQPage, SalesFlowPage, FulfillmentPage, ReturnsPage, InventoryControlPage, SupplierIntelligencePage, DealerPortalPage, PortalPage, CustomersPage, PricingPage, CommandCenterPage, GovernancePage } from './OperationsPages'
+import { BarcodePage, VinFitmentPage, MobileWarehousePage, PurchaseOrdersPage, ReceivingPage, WarehouseControlPage, WarehousesPage, ReorderPage, DemandPlanningPage, RFQPage, SalesFlowPage, FulfillmentPage, NotificationsPage, CopilotPage, FinancePage, WarrantyIntelligencePage, ReturnsPage, InventoryControlPage, SupplierIntelligencePage, DealerPortalPage, PortalPage, CustomersPage, PricingPage, CommandCenterPage, GovernancePage } from './OperationsPages'
 
 const nav = [
   ['receiving','/app/receiving','Receiving & matching','+'],
+  ['mobile_warehouse','/app/mobile-warehouse','Mobile warehouse','▣'],
+  ['notifications','/app/notifications','Notifications','✉'],
+  ['copilot','/app/copilot','AI copilot','✦'],
+  ['finance','/app/finance','Finance & GST','₹'],
+  ['warranty_intelligence','/app/warranty','Warranty insights','↺'],
   ['dashboard','/app','Overview','⌂'],
   ['inventory','/app/inventory','Inventory','⌕'],
   ['quotations','/app/quotations','Quotations','▤'],
@@ -177,12 +182,17 @@ export default function DashboardPage(){
     <Route path="fitments" element={<Allowed module="fitments"><VinFitmentPage/></Allowed>}/>
     <Route path="purchase-orders" element={<Allowed module="purchase_orders"><PurchaseOrdersPage/></Allowed>}/>
     <Route path="receiving" element={<Allowed module="receiving"><ReceivingPage/></Allowed>}/>
+    <Route path="mobile-warehouse" element={<Allowed module="mobile_warehouse"><MobileWarehousePage/></Allowed>}/>
     <Route path="warehouses" element={<Allowed module="warehouses"><WarehouseControlPage/></Allowed>}/>
     <Route path="reorder" element={<Allowed module="reorder"><ReorderPage/></Allowed>}/>
     <Route path="demand-planning" element={<Allowed module="demand_planning"><DemandPlanningPage/></Allowed>}/>
     <Route path="rfq" element={<Allowed module="rfq"><RFQPage/></Allowed>}/>
     <Route path="sales-flow" element={<Allowed module="sales_flow"><SalesFlowPage/></Allowed>}/>
     <Route path="fulfillment" element={<Allowed module="fulfillment"><FulfillmentPage/></Allowed>}/>
+    <Route path="notifications" element={<Allowed module="notifications"><NotificationsPage/></Allowed>}/>
+    <Route path="copilot" element={<Allowed module="copilot"><CopilotPage/></Allowed>}/>
+    <Route path="finance" element={<Allowed module="finance"><FinancePage/></Allowed>}/>
+    <Route path="warranty" element={<Allowed module="warranty_intelligence"><WarrantyIntelligencePage/></Allowed>}/>
     <Route path="returns" element={<Allowed module="returns"><ReturnsPage/></Allowed>}/>
     <Route path="inventory-control" element={<Allowed module="inventory_control"><InventoryControlPage/></Allowed>}/>
     <Route path="supplier-performance" element={<Allowed module="supplier_performance"><SupplierIntelligencePage/></Allowed>}/>

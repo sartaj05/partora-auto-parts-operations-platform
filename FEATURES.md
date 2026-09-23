@@ -35,6 +35,20 @@ VIN Fitment → Dealer Portal → Multi-Warehouse Control → Supplier Intellige
 - **Supplier Intelligence** — review delivery performance, shortage plans and contract renewal dates.
 - **Executive Command Center** — surface sales, inventory, procurement, invoice and warehouse risks in one view.
 
+## Next operations suite
+
+The next client-ready workflow is also available in the demo:
+
+```text
+Mobile Warehouse → Notifications → AI Copilot → Finance & GST → Warranty Intelligence
+```
+
+- **Mobile Warehouse** — scan, receive, pick and count from a device-friendly queue with offline sync status.
+- **Notifications** — queue supplier, dealer and internal messages using reusable workflow templates.
+- **AI Copilot** — answer stock, supplier, warehouse and invoice questions with explainable demo recommendations.
+- **Finance & GST** — reconcile payments, review receivables, estimate GST and export finance CSV data.
+- **Warranty Intelligence** — monitor claim approvals, root causes, supplier recovery and return-rate trends.
+
 ## Role access
 
 - **Admin**: all modules.

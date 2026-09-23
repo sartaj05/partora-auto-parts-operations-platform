@@ -6,10 +6,10 @@ export const demoAccounts = [
 ]
 
 export const modulesByRole = {
-  admin: ['dashboard', 'inventory', 'quotations', 'suppliers', 'stock', 'barcodes', 'fitments', 'purchase_orders', 'receiving', 'warehouses', 'reorder', 'demand_planning', 'rfq', 'sales_flow', 'fulfillment', 'crm', 'pricing', 'analytics', 'governance'],
-  manager: ['dashboard', 'inventory', 'quotations', 'suppliers', 'stock', 'barcodes', 'fitments', 'purchase_orders', 'receiving', 'warehouses', 'reorder', 'demand_planning', 'rfq', 'sales_flow', 'fulfillment', 'crm', 'pricing', 'analytics', 'governance'],
-  sales: ['dashboard', 'inventory', 'quotations', 'barcodes', 'fitments', 'sales_flow', 'fulfillment', 'crm', 'pricing', 'analytics', 'governance'],
-  store: ['dashboard', 'inventory', 'stock', 'barcodes', 'fitments', 'purchase_orders', 'receiving', 'warehouses', 'reorder', 'demand_planning', 'rfq', 'fulfillment', 'governance'],
+  admin: ['dashboard', 'inventory', 'quotations', 'suppliers', 'stock', 'barcodes', 'fitments', 'purchase_orders', 'receiving', 'mobile_warehouse', 'warehouses', 'reorder', 'demand_planning', 'rfq', 'sales_flow', 'fulfillment', 'notifications', 'copilot', 'finance', 'warranty_intelligence', 'crm', 'pricing', 'analytics', 'governance'],
+  manager: ['dashboard', 'inventory', 'quotations', 'suppliers', 'stock', 'barcodes', 'fitments', 'purchase_orders', 'receiving', 'mobile_warehouse', 'warehouses', 'reorder', 'demand_planning', 'rfq', 'sales_flow', 'fulfillment', 'notifications', 'copilot', 'finance', 'warranty_intelligence', 'crm', 'pricing', 'analytics', 'governance'],
+  sales: ['dashboard', 'inventory', 'quotations', 'barcodes', 'fitments', 'sales_flow', 'fulfillment', 'notifications', 'copilot', 'finance', 'warranty_intelligence', 'crm', 'pricing', 'analytics', 'governance'],
+  store: ['dashboard', 'inventory', 'stock', 'barcodes', 'fitments', 'purchase_orders', 'receiving', 'mobile_warehouse', 'warehouses', 'reorder', 'demand_planning', 'rfq', 'fulfillment', 'notifications', 'copilot', 'warranty_intelligence', 'governance'],
 }
 
 export const inventory = [
@@ -211,5 +211,48 @@ export const governanceState = {
   audits:[
     { id:1, user:'Kabir Store', action:'stock movement', entity:'product', entity_id:'6', detail:'out 18 / INV-5880', created_at:'2026-09-21T09:50:00+05:30' },
     { id:2, user:'Rohan Sales', action:'create', entity:'quotation', entity_id:'1', detail:'QT-260921-104', created_at:'2026-09-21T09:18:00+05:30' },
+  ],
+}
+
+export const mobileWarehouseState = {
+  queue: [
+    { id:1, type:'receive', reference:'GRN-8842', location:'DEL-MAIN', sku:'BRK-1048', product:'Ceramic Brake Pad Set', quantity:24, status:'ready', synced:true, created_at:'2026-09-23T09:10:00+05:30' },
+    { id:2, type:'pick', reference:'SO-260921-41BC', location:'GUR-SAT', sku:'HLM-H7', product:'H7 LED Headlamp Pair', quantity:2, status:'ready', synced:true, created_at:'2026-09-23T09:28:00+05:30' },
+    { id:3, type:'count', reference:'CNT-260923-1A90', location:'NOI-NTH', sku:'BRG-6204', product:'Deep Groove Bearing 6204', quantity:3, status:'queued', synced:false, created_at:'2026-09-23T09:41:00+05:30' },
+  ],
+  last_sync:'2026-09-23T09:35:00+05:30',
+}
+
+export const notificationState = {
+  items: [
+    { id:1, channel:'email', audience:'TorqueLine Components', event:'RFQ response reminder', status:'sent', detail:'RFQ-260923-FLT quote comparison is waiting for supplier confirmation.', created_at:'2026-09-23T09:22:00+05:30' },
+    { id:2, channel:'whatsapp', audience:'Northline Repairs', event:'Quote approval', status:'delivered', detail:'QT-260921-103 is ready for dealer approval.', created_at:'2026-09-23T09:08:00+05:30' },
+    { id:3, channel:'email', audience:'Meera Manager', event:'Invoice exception', status:'queued', detail:'VE-INV-8821 needs review before payment.', created_at:'2026-09-23T08:55:00+05:30' },
+  ],
+  templates: ['RFQ response reminder','Purchase order dispatched','Delivery update','Invoice exception','Quote approval','Low-stock alert'],
+}
+
+export const copilotState = {
+  suggested_questions: ['Which parts may stock out this week?','Which supplier has the best delivery performance?','Why is warehouse stock below target?','What invoices need manager approval?'],
+  messages: [],
+}
+
+export const financeState = {
+  metrics: { receivables:54280, payables:69300, overdue:12780, gst_due:18450, reconciled:82 },
+  invoices: [
+    { id:1, invoice_no:'INV-260921-0081', customer:'Northline Repairs', total:32600, paid:0, balance:32600, status:'issued', due_date:'2026-10-21', gst:5868 },
+    { id:2, invoice_no:'INV-260918-0074', customer:'Rapid Fleet Care', total:12780, paid:0, balance:12780, status:'overdue', due_date:'2026-09-18', gst:2300 },
+    { id:3, invoice_no:'INV-260915-0069', customer:'Metro Garage', total:18450, paid:18450, balance:0, status:'paid', due_date:'2026-09-30', gst:3321 },
+  ],
+  payments: [{ id:1, reference:'UPI-88421', invoice_no:'INV-260915-0069', amount:18450, method:'UPI', reconciled:true, paid_at:'2026-09-22' }],
+  tax_summary: [{ label:'Output GST', value:11489 }, { label:'Input GST', value:6961 }, { label:'Net GST payable', value:4528 }],
+}
+
+export const warrantyState = {
+  metrics: { open_claims:4, approval_queue:2, supplier_recovery:28750, return_rate:2.8 },
+  claims: [
+    { id:1, claim_no:'RMA-260923-7A2C', sku:'BRK-1048', product:'Ceramic Brake Pad Set', customer:'Northline Repairs', reason:'Premature wear', status:'inspection', resolution:'replacement', supplier:'TorqueLine Components', recovery_amount:4900, root_cause:'Pending inspection', created_at:'2026-09-23' },
+    { id:2, claim_no:'RMA-260922-6F10', sku:'HLM-H7', product:'H7 LED Headlamp Pair', customer:'Metro Garage', reason:'Intermittent failure', status:'approved', resolution:'credit', supplier:'VoltEdge Electricals', recovery_amount:3300, root_cause:'Driver board defect', created_at:'2026-09-22' },
+    { id:3, claim_no:'RMA-260919-51D4', sku:'FLT-2210', product:'Engine Oil Filter', customer:'Rapid Fleet Care', reason:'Wrong fitment', status:'resolved', resolution:'restock', supplier:'TorqueLine Components', recovery_amount:0, root_cause:'Catalog fitment mismatch', created_at:'2026-09-19' },
   ],
 }

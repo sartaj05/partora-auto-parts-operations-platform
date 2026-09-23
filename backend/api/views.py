@@ -14,10 +14,10 @@ from .models import Product, Quotation, StockMovement, Supplier, SupplierContrac
 from .serializers import product_dict, quotation_dict, supplier_dict
 
 ROLE_MODULES = {
-    "admin": ["dashboard", "inventory", "quotations", "suppliers", "stock", "barcodes", "fitments", "purchase_orders", "receiving", "warehouses", "reorder", "demand_planning", "rfq", "sales_flow", "fulfillment", "returns", "inventory_control", "supplier_performance", "portal", "crm", "pricing", "analytics", "governance"],
-    "manager": ["dashboard", "inventory", "quotations", "suppliers", "stock", "barcodes", "fitments", "purchase_orders", "receiving", "warehouses", "reorder", "demand_planning", "rfq", "sales_flow", "fulfillment", "returns", "inventory_control", "supplier_performance", "portal", "crm", "pricing", "analytics", "governance"],
-    "sales": ["dashboard", "inventory", "quotations", "barcodes", "fitments", "sales_flow", "fulfillment", "returns", "portal", "crm", "pricing", "analytics", "governance"],
-    "store": ["dashboard", "inventory", "stock", "barcodes", "fitments", "purchase_orders", "receiving", "warehouses", "reorder", "demand_planning", "rfq", "sales_flow", "fulfillment", "returns", "inventory_control", "supplier_performance", "governance"],
+    "admin": ["dashboard", "inventory", "quotations", "suppliers", "stock", "barcodes", "fitments", "purchase_orders", "receiving", "mobile_warehouse", "warehouses", "reorder", "demand_planning", "rfq", "sales_flow", "fulfillment", "notifications", "copilot", "finance", "warranty_intelligence", "returns", "inventory_control", "supplier_performance", "portal", "crm", "pricing", "analytics", "governance"],
+    "manager": ["dashboard", "inventory", "quotations", "suppliers", "stock", "barcodes", "fitments", "purchase_orders", "receiving", "mobile_warehouse", "warehouses", "reorder", "demand_planning", "rfq", "sales_flow", "fulfillment", "notifications", "copilot", "finance", "warranty_intelligence", "returns", "inventory_control", "supplier_performance", "portal", "crm", "pricing", "analytics", "governance"],
+    "sales": ["dashboard", "inventory", "quotations", "barcodes", "fitments", "sales_flow", "fulfillment", "notifications", "copilot", "finance", "warranty_intelligence", "returns", "portal", "crm", "pricing", "analytics", "governance"],
+    "store": ["dashboard", "inventory", "stock", "barcodes", "fitments", "purchase_orders", "receiving", "mobile_warehouse", "warehouses", "reorder", "demand_planning", "rfq", "sales_flow", "fulfillment", "notifications", "copilot", "warranty_intelligence", "returns", "inventory_control", "supplier_performance", "governance"],
 }
 
 def parse_body(request):
@@ -362,6 +362,91 @@ def receiving_view(request):
         raise ValueError("Unknown receiving action")
     except Exception as exc:
         return JsonResponse({"detail":f"Could not complete receiving action: {exc}"},status=400)
+
+@csrf_exempt
+@roles_allowed("admin", "manager", "store")
+def mobile_warehouse_view(request):
+    if request.method == "GET":
+        tasks=[]
+        for movement in StockMovement.objects.select_related("product").order_by("-created_at")[:25]:
+            tasks.append({"id": movement.id, "type": "receive" if movement.movement_type == "in" else "pick", "reference": movement.reference or f"SCAN-{movement.id}", "location": "DEL-MAIN", "sku": movement.product.sku, "product": movement.product.name, "quantity": movement.quantity, "status": "synced", "synced": True, "created_at": movement.created_at.isoformat()})
+        return JsonResponse({"queue": tasks, "last_sync": timezone.now().isoformat()})
+    data=parse_body(request) or {}; action=str(data.get("action", "scan"))
+    try:
+        if action == "scan":
+            product=Product.objects.get(sku=str(data.get("sku", "")).strip().upper())
+            item={"id": f"scan-{uuid4().hex[:8]}", "type": str(data.get("type", "count")), "reference": str(data.get("reference") or f"SCAN-{timezone.now():%y%m%d}-{uuid4().hex[:4].upper()}"), "location": str(data.get("location", "DEL-MAIN")), "sku": product.sku, "product": product.name, "quantity": max(1, int(data.get("quantity", 1))), "status": "queued", "synced": False, "created_at": timezone.now().isoformat()}
+            record_audit(request, "mobile warehouse scan", "product", product.id, f"{item['type']} / {item['reference']}")
+            return JsonResponse({"item": item}, status=201)
+        if action == "sync":
+            return JsonResponse({"item": {"last_sync": timezone.now().isoformat(), "synced": True}})
+        return JsonResponse({"item": {"id": data.get("id"), "status": "complete"}})
+    except Exception as exc:
+        return JsonResponse({"detail": f"Could not process mobile warehouse action: {exc}"}, status=400)
+
+@csrf_exempt
+@roles_allowed("admin", "manager", "sales", "store")
+def notifications_view(request):
+    if request.method == "GET":
+        qs=Notification.objects.filter(Q(user=request.api_user)|Q(user__isnull=True,role="")|Q(user__isnull=True,role=request.api_user.profile.role)).order_by("-created_at")[:100]
+        items=[{"id":n.id,"channel":"email","audience":n.user.get_full_name() if n.user else (n.role or "Operations team"),"event":n.title,"status":"read" if n.read else "queued","detail":n.message,"created_at":n.created_at.isoformat()} for n in qs]
+        return JsonResponse({"items":items,"templates":["RFQ response reminder","Purchase order dispatched","Delivery update","Invoice exception","Quote approval","Low-stock alert"]})
+    data=parse_body(request) or {}
+    try:
+        item=Notification.objects.create(user=request.api_user,title=str(data.get("event", "Operational update"))[:140],message=str(data.get("detail", "Notification queued for delivery."))[:300])
+        record_audit(request, "send notification", "notification", item.id, item.title)
+        return JsonResponse({"item":{"id":item.id,"channel":data.get("channel", "email"),"audience":data.get("audience", "Operations team"),"event":item.title,"status":"queued","detail":item.message,"created_at":item.created_at.isoformat()}}, status=201)
+    except Exception as exc:
+        return JsonResponse({"detail": f"Could not queue notification: {exc}"}, status=400)
+
+@csrf_exempt
+@roles_allowed("admin", "manager", "sales", "store")
+def copilot_view(request):
+    suggestions=["Which parts may stock out this week?", "Which supplier has the best delivery performance?", "Why is warehouse stock below target?", "What invoices need manager approval?"]
+    if request.method == "GET": return JsonResponse({"suggested_questions": suggestions, "messages": []})
+    data=parse_body(request) or {}; question=str(data.get("question", "")).strip(); lower=question.lower()
+    if not question: return JsonResponse({"detail":"Ask the copilot a question"}, status=400)
+    answer="Partora recommends reviewing the demand plan, supplier scorecard and action queue before committing inventory or payment changes."; source="Operations command center"
+    if "stock" in lower: answer="RLY-24V4 is the highest stock-out risk. Raise a replenishment plan for 90 units and confirm VoltEdge availability."; source="Demand planning + inventory"
+    elif "supplier" in lower or "delivery" in lower: answer="TorqueLine leads on reliability in the current history. VoltEdge is faster but has an invoice exception to resolve."; source="Supplier intelligence + receiving"
+    elif "warehouse" in lower: answer="Noida North is at 89% capacity. Move slow-moving stock before the next inbound receipt."; source="Warehouse control"
+    elif "invoice" in lower or "payment" in lower: answer="VE-INV-8821 needs manager review because its invoice quantity includes damaged units."; source="Finance + three-way matching"
+    item={"id":uuid4().hex[:8],"question":question,"answer":answer,"source":source,"confidence":"Demo analysis","created_at":timezone.now().isoformat()}
+    record_audit(request, "copilot question", "operations", item["id"], question)
+    return JsonResponse({"item":item})
+
+@csrf_exempt
+@roles_allowed("admin", "manager", "sales")
+def finance_view(request):
+    def invoice_item(invoice):
+        paid=float(invoice.payments.aggregate(total=Sum("amount"))["total"] or 0); total=float(invoice.total); balance=max(0, total-paid)
+        return {"id":invoice.id,"invoice_no":invoice.invoice_no,"customer":invoice.sales_order.customer_company or invoice.sales_order.customer_name,"total":total,"paid":paid,"balance":balance,"status":"paid" if balance==0 else "partial" if paid else invoice.status,"due_date":invoice.due_date.isoformat(),"gst":round(total*18/118,2)}
+    if request.method == "GET":
+        invoices=[invoice_item(i) for i in Invoice.objects.select_related("sales_order").prefetch_related("payments").order_by("-created_at")[:100]]
+        return JsonResponse({"metrics":{"receivables":sum(i["balance"] for i in invoices),"payables":float(SupplierInvoice.objects.exclude(status="rejected").aggregate(total=Sum("total"))["total"] or 0),"overdue":sum(i["balance"] for i in invoices if i["due_date"] < timezone.localdate().isoformat() and i["balance"]),"gst_due":round(sum(i["gst"] for i in invoices),2),"reconciled":round(sum(1 for i in invoices if i["status"] in {"paid","partial"})/len(invoices)*100) if invoices else 0},"invoices":invoices,"payments":[{"id":p.id,"reference":p.reference,"invoice_no":p.invoice.invoice_no,"amount":float(p.amount),"method":p.method,"reconciled":True,"paid_at":p.paid_at.date().isoformat()} for p in Payment.objects.select_related("invoice").order_by("-paid_at")[:50]],"tax_summary":[{"label":"Output GST","value":round(sum(i["gst"] for i in invoices),2)},{"label":"Input GST","value":round(sum(i["gst"] for i in invoices)*.61,2)},{"label":"Net GST payable","value":round(sum(i["gst"] for i in invoices)*.39,2)}]})
+    data=parse_body(request) or {}; action=str(data.get("action", "reconcile"))
+    try:
+        if action == "reconcile":
+            invoice=Invoice.objects.select_related("sales_order").prefetch_related("payments").get(id=int(data["invoice_id"])); amount=Decimal(str(data.get("amount", invoice.total) or 0)); Payment.objects.create(invoice=invoice,amount=amount,method=str(data.get("method", "bank")),reference=str(data.get("reference", "")),created_by=request.api_user)
+            paid=invoice.payments.aggregate(total=Sum("amount"))["total"] or 0; invoice.status="paid" if paid>=invoice.total else "partial"; invoice.save(update_fields=["status"]); record_audit(request,"reconcile payment","invoice",invoice.id,invoice.invoice_no); return JsonResponse({"item":invoice_item(invoice)})
+        return JsonResponse({"item":{"format":data.get("format", "csv"),"filename":f"partora-finance-{timezone.localdate().isoformat()}.csv"}})
+    except Exception as exc:
+        return JsonResponse({"detail": f"Could not complete finance action: {exc}"}, status=400)
+
+@csrf_exempt
+@roles_allowed("admin", "manager", "sales", "store")
+def warranty_view(request):
+    def claim_item(item): return {"id":item.id,"claim_no":item.return_no,"sku":item.product.sku,"product":item.product.name,"customer":item.customer_name,"reason":item.reason,"status":item.status,"resolution":item.resolution,"supplier":item.product.supplier.name if item.product.supplier else "Unassigned","recovery_amount":float(item.refund_amount),"root_cause":item.inspection_notes or "Pending inspection","created_at":item.created_at.isoformat()}
+    if request.method == "GET":
+        claims=[claim_item(item) for item in ReturnRequest.objects.select_related("product__supplier").order_by("-created_at")[:100]]; return JsonResponse({"metrics":{"open_claims":sum(1 for x in claims if x["status"] not in {"resolved","rejected"}),"approval_queue":sum(1 for x in claims if x["status"] in {"requested","inspected"}),"supplier_recovery":sum(x["recovery_amount"] for x in claims),"return_rate":round(len(claims)/max(Product.objects.count(),1)*100,1)},"claims":claims})
+    data=parse_body(request) or {}; action=str(data.get("action", "status"))
+    try:
+        item=ReturnRequest.objects.select_related("product__supplier").get(id=int(data["id"]))
+        if action == "status": item.status=str(data.get("status", item.status)); item.resolution=str(data.get("resolution", item.resolution)); item.inspection_notes=str(data.get("root_cause", item.inspection_notes)); item.save(update_fields=["status","resolution","inspection_notes","updated_at"])
+        elif action == "chargeback": item.refund_amount=Decimal(str(data.get("amount", item.refund_amount) or 0)); item.save(update_fields=["refund_amount","updated_at"])
+        record_audit(request,"update warranty claim","return",item.id,item.return_no); return JsonResponse({"item":claim_item(item)})
+    except Exception as exc:
+        return JsonResponse({"detail": f"Could not update warranty claim: {exc}"}, status=400)
 
 @csrf_exempt
 @roles_allowed("admin", "manager", "store")

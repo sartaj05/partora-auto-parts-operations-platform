@@ -1,4 +1,4 @@
-import { analyticsData, customers, demandPlanningData, demandPlanningState, demoAccounts, fitments, fulfillmentState, governanceState, inventory, inventoryControlState, mockDashboard, modulesByRole, portalState, priceRules, purchaseOrders, quotations, receivingState, reorderSuggestions, returnsState, rfqState, salesFlow, stock, supplierPerformanceState, suppliers, vinVehicles, warehouseState } from '../mock/data'
+import { analyticsData, copilotState, customers, demandPlanningData, demandPlanningState, demoAccounts, financeState, fitments, fulfillmentState, governanceState, inventory, inventoryControlState, mockDashboard, mobileWarehouseState, modulesByRole, notificationState, portalState, priceRules, purchaseOrders, quotations, receivingState, reorderSuggestions, returnsState, rfqState, salesFlow, stock, supplierPerformanceState, suppliers, vinVehicles, warehouseState, warrantyState } from '../mock/data'
 
 const API_BASE = (import.meta.env.VITE_API_URL || '/api').replace(/\/$/, '')
 const NETWORK_MESSAGE = 'Backend unavailable. Demo mode is active.'
@@ -53,6 +53,7 @@ const fallback = {
   '/fitments/': () => ({ items: fitments, count: fitments.length }),
   '/purchase-orders/': () => ({ items: purchaseOrders, count: purchaseOrders.length }),
   '/receiving/': () => receivingState,
+  '/mobile-warehouse/': () => mobileWarehouseState,
   '/warehouses/': () => warehouseState,
   '/reorder/': () => ({ items: reorderSuggestions(), count: reorderSuggestions().length }),
   '/demand-planning/': () => demandPlanningData(),
@@ -66,6 +67,10 @@ const fallback = {
   '/pricing/': () => ({ items: priceRules }),
   '/analytics/': () => analyticsData(),
   '/governance/': () => governanceState,
+  '/notifications/': () => notificationState,
+  '/copilot/': () => copilotState,
+  '/finance/': () => financeState,
+  '/warranty/': () => warrantyState,
 }
 
 export async function loadEndpoint(path, role) {
@@ -98,6 +103,25 @@ export async function portalAction(token, payload) {
 
 function createMock(path, payload, role) {
   const id = Date.now()
+  if (path === '/mobile-warehouse/') {
+    if (payload.action === 'scan') { const item={id, type:payload.type||'count', reference:payload.reference||`SCAN-${String(id).slice(-5)}`, location:payload.location||'DEL-MAIN', sku:String(payload.sku||'').toUpperCase(), product:inventory.find(x=>x.sku===String(payload.sku||'').toUpperCase())?.name||'Scanned part', quantity:Number(payload.quantity||1), status:'queued', synced:false, created_at:new Date().toISOString()}; mobileWarehouseState.queue.unshift(item); return {item} }
+    if (payload.action === 'sync') { mobileWarehouseState.queue.forEach(x=>{if(!x.synced){x.synced=true;x.status='synced'}}); mobileWarehouseState.last_sync=new Date().toISOString(); return {item:{queue:mobileWarehouseState.queue,last_sync:mobileWarehouseState.last_sync}} }
+    const item=mobileWarehouseState.queue.find(x=>x.id===Number(payload.id)); if(!item)throw new Error('Warehouse task not found'); item.status=payload.action==='complete'?'complete':item.status; return {item}
+  }
+  if (path === '/notifications/') {
+    const item={id,channel:payload.channel||'email',audience:payload.audience||'Operations team',event:payload.event||'Operational alert',status:'queued',detail:payload.detail||'Notification queued for delivery.',created_at:new Date().toISOString()}; notificationState.items.unshift(item); return {item}
+  }
+  if (path === '/copilot/') {
+    const question=String(payload.question||'').trim(); if(!question)throw new Error('Ask the copilot a question')
+    const lower=question.toLowerCase(); let answer='Partora recommends reviewing the demand plan, supplier scorecard and action queue before committing inventory or payment changes.'; let source='Operations command center'; if(lower.includes('stock')){answer='RLY-24V4 is the highest stock-out risk. Raise a replenishment plan for 90 units and confirm VoltEdge availability.';source='Demand planning + inventory'}else if(lower.includes('supplier')||lower.includes('delivery')){answer='TorqueLine leads on reliability at 100% on-time in the current demo history. VoltEdge is faster but has an invoice exception to resolve.';source='Supplier intelligence + receiving'}else if(lower.includes('warehouse')){answer='Noida North is at 89% capacity. Move slow-moving BLT-0812 stock to Gurugram before the next inbound receipt.';source='Warehouse control'}else if(lower.includes('invoice')||lower.includes('payment')){answer='VE-INV-8821 needs manager review because its invoice quantity includes damaged units.';source='Finance + three-way matching'} const item={id,question,answer,source,confidence:'Demo analysis',created_at:new Date().toISOString()}; copilotState.messages.unshift(item); return {item}
+  }
+  if (path === '/finance/') {
+    if (payload.action === 'reconcile') { const invoice=financeState.invoices.find(x=>x.id===Number(payload.invoice_id)); if(!invoice)throw new Error('Invoice not found'); const amount=Number(payload.amount||invoice.balance); invoice.paid=Math.min(invoice.total,invoice.paid+amount); invoice.balance=Math.max(0,invoice.total-invoice.paid); invoice.status=invoice.balance===0?'paid':'partial'; financeState.payments.unshift({id,reference:payload.reference||`REC-${String(id).slice(-5)}`,invoice_no:invoice.invoice_no,amount,method:payload.method||'bank',reconciled:true,paid_at:new Date().toISOString().slice(0,10)}); return {item:invoice} }
+    if (payload.action === 'export') return {item:{format:payload.format||'csv',filename:`partora-finance-${new Date().toISOString().slice(0,10)}.${payload.format||'csv'}`,rows:financeState.invoices.length}}
+  }
+  if (path === '/warranty/') {
+    const item=warrantyState.claims.find(x=>x.id===Number(payload.id)); if(!item)throw new Error('Warranty claim not found'); if(payload.action==='status')item.status=payload.status||item.status; if(payload.action==='chargeback')item.recovery_amount=Number(payload.amount||item.recovery_amount); return {item}
+  }
   if (path === '/governance/') {
     if(payload.action==='request'){const item={id:Date.now(),kind:payload.kind||'purchase',reference:payload.reference,amount:Number(payload.amount||0),status:'pending',requested_by:'Demo User',reviewed_by:null,notes:payload.notes||'',created_at:new Date().toISOString()};governanceState.approvals.unshift(item);return {item}}
     if(['approve','reject'].includes(payload.action)){const item=governanceState.approvals.find(x=>x.id===Number(payload.id));if(!item)throw new Error('Approval not found');item.status=payload.action==='approve'?'approved':'rejected';item.reviewed_by='Demo Manager';return {item}}

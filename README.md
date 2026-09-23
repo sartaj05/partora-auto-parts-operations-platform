@@ -34,6 +34,11 @@ Client demonstration highlights:
 - Branch capacity visibility with traceable multi-warehouse transfers
 - Supplier scorecards with contract renewal and shortage alerts
 - Executive operations command center with action queues and CSV reporting
+- Mobile warehouse queue with offline task sync
+- Supplier and dealer workflow notifications
+- Explainable AI operations copilot
+- GST, receivables and payment reconciliation
+- Warranty claims, root causes and supplier chargeback tracking
 
 See `FEATURES.md` for the feature-by-feature scope.
 

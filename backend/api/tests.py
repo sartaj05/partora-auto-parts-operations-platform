@@ -182,3 +182,18 @@ class DemandPlanningApiTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["contracts"][0]["contract_no"], "TEST-CONTRACT-001")
+
+    def test_client_demo_operations_endpoints_are_available(self):
+        for path in ("/api/mobile-warehouse/", "/api/notifications/", "/api/finance/", "/api/warranty/"):
+            response = self.client.get(path, **self.auth_headers(self.manager))
+            self.assertEqual(response.status_code, 200, path)
+
+        response = self.client.post(
+            "/api/copilot/",
+            data={"question": "Which parts may stock out this week?"},
+            content_type="application/json",
+            **self.auth_headers(self.manager),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("RLY-24V4", response.json()["item"]["answer"])
