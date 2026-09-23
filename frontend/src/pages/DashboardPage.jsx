@@ -4,7 +4,7 @@ import { createEndpoint, loadEndpoint } from '../api/client'
 import { useAuth } from '../context/AuthContext'
 import CreateModal from '../components/CreateModal'
 import StatusBadge from '../components/StatusBadge'
-import { BarcodePage, FitmentsPage, PurchaseOrdersPage, ReceivingPage, WarehousesPage, ReorderPage, DemandPlanningPage, RFQPage, SalesFlowPage, FulfillmentPage, ReturnsPage, InventoryControlPage, SupplierPerformancePage, PortalPage, CustomersPage, PricingPage, AnalyticsPage, GovernancePage } from './OperationsPages'
+import { BarcodePage, VinFitmentPage, PurchaseOrdersPage, ReceivingPage, WarehouseControlPage, WarehousesPage, ReorderPage, DemandPlanningPage, RFQPage, SalesFlowPage, FulfillmentPage, ReturnsPage, InventoryControlPage, SupplierIntelligencePage, DealerPortalPage, PortalPage, CustomersPage, PricingPage, CommandCenterPage, GovernancePage } from './OperationsPages'
 
 const nav = [
   ['receiving','/app/receiving','Receiving & matching','+'],
@@ -174,10 +174,10 @@ export default function DashboardPage(){
     <Route path="suppliers" element={<Allowed module="suppliers"><Suppliers/></Allowed>}/>
     <Route path="stock" element={<Allowed module="stock"><Stock/></Allowed>}/>
     <Route path="barcodes" element={<Allowed module="barcodes"><BarcodePage/></Allowed>}/>
-    <Route path="fitments" element={<Allowed module="fitments"><FitmentsPage/></Allowed>}/>
+    <Route path="fitments" element={<Allowed module="fitments"><VinFitmentPage/></Allowed>}/>
     <Route path="purchase-orders" element={<Allowed module="purchase_orders"><PurchaseOrdersPage/></Allowed>}/>
     <Route path="receiving" element={<Allowed module="receiving"><ReceivingPage/></Allowed>}/>
-    <Route path="warehouses" element={<Allowed module="warehouses"><WarehousesPage/></Allowed>}/>
+    <Route path="warehouses" element={<Allowed module="warehouses"><WarehouseControlPage/></Allowed>}/>
     <Route path="reorder" element={<Allowed module="reorder"><ReorderPage/></Allowed>}/>
     <Route path="demand-planning" element={<Allowed module="demand_planning"><DemandPlanningPage/></Allowed>}/>
     <Route path="rfq" element={<Allowed module="rfq"><RFQPage/></Allowed>}/>
@@ -185,11 +185,11 @@ export default function DashboardPage(){
     <Route path="fulfillment" element={<Allowed module="fulfillment"><FulfillmentPage/></Allowed>}/>
     <Route path="returns" element={<Allowed module="returns"><ReturnsPage/></Allowed>}/>
     <Route path="inventory-control" element={<Allowed module="inventory_control"><InventoryControlPage/></Allowed>}/>
-    <Route path="supplier-performance" element={<Allowed module="supplier_performance"><SupplierPerformancePage/></Allowed>}/>
-    <Route path="portal" element={<Allowed module="portal"><PortalPage/></Allowed>}/>
+    <Route path="supplier-performance" element={<Allowed module="supplier_performance"><SupplierIntelligencePage/></Allowed>}/>
+    <Route path="portal" element={<Allowed module="portal"><DealerPortalPage/></Allowed>}/>
     <Route path="customers" element={<Allowed module="crm"><CustomersPage/></Allowed>}/>
     <Route path="pricing" element={<Allowed module="pricing"><PricingPage/></Allowed>}/>
-    <Route path="analytics" element={<Allowed module="analytics"><AnalyticsPage/></Allowed>}/>
+    <Route path="analytics" element={<Allowed module="analytics"><CommandCenterPage/></Allowed>}/>
     <Route path="governance" element={<Allowed module="governance"><GovernancePage/></Allowed>}/>
     <Route path="*" element={<Navigate to="/app" replace/>}/>
   </Routes></Shell>

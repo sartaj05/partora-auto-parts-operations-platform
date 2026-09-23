@@ -27,6 +27,14 @@ The original landing/login/dashboard experience plus eighteen operational module
 - Goods receipt, damaged-stock handling and three-way supplier invoice matching
 - Customer/dealer self-service portal links
 
+Client demonstration highlights:
+
+- VIN decoding with vehicle-aware compatible parts and stock confidence
+- Dealer self-service access for quotes, orders, invoices and account exposure
+- Branch capacity visibility with traceable multi-warehouse transfers
+- Supplier scorecards with contract renewal and shortage alerts
+- Executive operations command center with action queues and CSV reporting
+
 See `FEATURES.md` for the feature-by-feature scope.
 
 ## Stack

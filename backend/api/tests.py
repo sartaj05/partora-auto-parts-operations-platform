@@ -4,7 +4,7 @@ from django.contrib.auth.models import User
 from django.test import TestCase
 
 from .auth import issue_token
-from .models import DemandHistory, GoodsReceipt, Product, Profile, PurchaseOrder, PurchasePlan, RFQ, RFQOffer, Supplier, SupplierInvoice
+from .models import DemandHistory, GoodsReceipt, Product, Profile, PurchaseOrder, PurchasePlan, RFQ, RFQOffer, Supplier, SupplierContract, SupplierInvoice, VehicleFitment
 
 
 class DemandPlanningApiTests(TestCase):
@@ -158,3 +158,27 @@ class DemandPlanningApiTests(TestCase):
         self.assertEqual(approve_response.status_code, 200)
         invoice.refresh_from_db()
         self.assertEqual(invoice.status, "approved")
+
+    def test_vin_decode_returns_compatible_stock_aware_parts(self):
+        VehicleFitment.objects.create(product=self.product, make="Maruti Suzuki", model="Swift", year_from=2018, year_to=2026, variant="Petrol / AMT", engine="1.2L", oem_number="OEM-TEST-001")
+
+        response = self.client.post(
+            "/api/fitments/",
+            data={"action": "decode_vin", "vin": "MA3EJKD1S00A12345"},
+            content_type="application/json",
+            **self.auth_headers(self.manager),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        item = response.json()["item"]
+        self.assertEqual(item["vehicle"]["model"], "Swift")
+        self.assertEqual(item["matches"][0]["sku"], "TEST-001")
+        self.assertEqual(item["matches"][0]["stock_status"], "low")
+
+    def test_supplier_intelligence_returns_contract_watchlist(self):
+        SupplierContract.objects.create(contract_no="TEST-CONTRACT-001", supplier=self.supplier, expires_on=date.today() + timedelta(days=30), payment_terms="Net 30", annual_value=50000, status="expiring")
+
+        response = self.client.get("/api/supplier-performance/", **self.auth_headers(self.manager))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["contracts"][0]["contract_no"], "TEST-CONTRACT-001")

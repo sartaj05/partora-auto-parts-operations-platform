@@ -21,6 +21,20 @@ The enhanced demo adds operational modules on top of the original inventory, quo
 17. **Supplier RFQ & quote comparison** — request multiple supplier offers, compare price, lead time, availability and reliability, then select an approved offer into a purchase order.
 18. **Goods receipt & three-way invoice matching** — post partial deliveries, separate damaged units, update sellable inventory and match supplier invoices against PO pricing and received quantities before manager approval.
 
+## Client demo journey
+
+The recommended presentation path is:
+
+```text
+VIN Fitment → Dealer Portal → Multi-Warehouse Control → Supplier Intelligence → Executive Command Center
+```
+
+- **VIN Fitment** — decode a supported demo VIN, identify the vehicle and show stock-aware compatible parts.
+- **Dealer Portal** — issue a time-limited customer link for quote approvals, order tracking, invoices and account exposure.
+- **Multi-Warehouse Control** — compare branch capacity and create traceable stock transfers.
+- **Supplier Intelligence** — review delivery performance, shortage plans and contract renewal dates.
+- **Executive Command Center** — surface sales, inventory, procurement, invoice and warehouse risks in one view.
+
 ## Role access
 
 - **Admin**: all modules.
@@ -30,4 +44,4 @@ The enhanced demo adds operational modules on top of the original inventory, quo
 
 ## Demo resilience
 
-Every enhanced React module has local fallback data or a local demo action. If the Django API is unavailable, a static frontend deployment remains navigable and demonstrable with the same four demo logins.
+Every enhanced React module has local fallback data or a local demo action. If the Django API is unavailable, a static frontend deployment remains navigable and demonstrable with the same four demo logins. The five client-demo screens also include realistic seeded states and interactive fallback actions, so a backend outage does not interrupt a presentation.

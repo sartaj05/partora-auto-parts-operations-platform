@@ -1,4 +1,4 @@
-import { analyticsData, customers, demandPlanningData, demandPlanningState, demoAccounts, fitments, fulfillmentState, governanceState, inventory, inventoryControlState, mockDashboard, modulesByRole, portalState, priceRules, purchaseOrders, quotations, receivingState, reorderSuggestions, returnsState, rfqState, salesFlow, stock, supplierPerformanceState, suppliers, warehouseState } from '../mock/data'
+import { analyticsData, customers, demandPlanningData, demandPlanningState, demoAccounts, fitments, fulfillmentState, governanceState, inventory, inventoryControlState, mockDashboard, modulesByRole, portalState, priceRules, purchaseOrders, quotations, receivingState, reorderSuggestions, returnsState, rfqState, salesFlow, stock, supplierPerformanceState, suppliers, vinVehicles, warehouseState } from '../mock/data'
 
 const API_BASE = (import.meta.env.VITE_API_URL || '/api').replace(/\/$/, '')
 const NETWORK_MESSAGE = 'Backend unavailable. Demo mode is active.'
@@ -202,6 +202,12 @@ function createMock(path, payload, role) {
     if(payload.action==='approve'){const invoice=order.invoices.find(x=>x.id===Number(payload.invoice_id));if(!invoice)throw new Error('Invoice not found');invoice.status='approved';return {item:{id:invoice.id,invoice_no:invoice.invoice_no,status:invoice.status}}}
   }
   if (path === '/fitments/') {
+    if (payload.action === 'decode_vin') {
+      const vin = String(payload.vin || '').replace(/\s+/g, '').toUpperCase(); const vehicle = vinVehicles[vin] || (vin.length >= 8 ? { make:'Maruti Suzuki', model:'Swift', year:2022, variant:'Petrol / AMT', engine:'1.2L', fuel:'Petrol' } : null)
+      if (!vehicle) throw new Error('Enter a valid 8+ character VIN')
+      const matches = fitments.filter(x => x.make === vehicle.make && x.model === vehicle.model && vehicle.year >= x.year_from && vehicle.year <= x.year_to).map(x => ({...x, stock_qty:inventory.find(p=>p.sku===x.sku)?.stock_qty||0, stock_status:inventory.find(p=>p.sku===x.sku)?.stock_status||'unknown', fitment_confidence:x.oem_number?'98%':'92%'}))
+      return { item:{vin,vehicle,matches} }
+    }
     const product = inventory.find(x => x.sku.toUpperCase() === String(payload.sku || '').toUpperCase())
     if (!product) throw new Error('SKU not found in demo inventory')
     const item={id:Date.now(),sku:product.sku,product:product.name,make:payload.make,model:payload.model,year_from:Number(payload.year_from),year_to:Number(payload.year_to||payload.year_from),variant:payload.variant||'',engine:payload.engine||'',oem_number:payload.oem_number||''}

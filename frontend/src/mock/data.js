@@ -64,6 +64,11 @@ export const fitments = [
   { id:3, sku:'HLM-H7', product:'H7 LED Headlamp Pair', make:'Universal', model:'H7 socket', year_from:2005, year_to:2026, variant:'12V', engine:'', oem_number:'H7' },
 ]
 
+export const vinVehicles = {
+  'MA3EJKD1S00A12345': { make:'Maruti Suzuki', model:'Swift', year:2022, variant:'Petrol / AMT', engine:'1.2L', fuel:'Petrol' },
+  'MALBB51BLNM123456': { make:'Hyundai', model:'i20', year:2023, variant:'Sportz', engine:'1.2L', fuel:'Petrol' },
+}
+
 export const purchaseOrders = [
   { id:1, po_no:'PO-260921-A12F', supplier:'TorqueLine Components', status:'ordered', expected_date:'2026-09-24', total:25200, created_by:'Meera Manager', line_count:3, received_lines:0 },
   { id:2, po_no:'PO-260920-90BD', supplier:'VoltEdge Electricals', status:'partial', expected_date:'2026-09-23', total:44100, created_by:'Aarav Admin', line_count:4, received_lines:2 },
@@ -80,9 +85,9 @@ export const receivingState = {
 
 export const warehouseState = {
   warehouses: [
-    { id:1, code:'DEL-MAIN', name:'Delhi Main Warehouse', address:'Okhla Industrial Area, Delhi', sku_count:8, units:781 },
-    { id:2, code:'GUR-SAT', name:'Gurugram Satellite Store', address:'Udyog Vihar, Gurugram', sku_count:5, units:214 },
-    { id:3, code:'NOI-NTH', name:'Noida North Store', address:'Sector 63, Noida', sku_count:4, units:133 },
+    { id:1, code:'DEL-MAIN', name:'Delhi Main Warehouse', address:'Okhla Industrial Area, Delhi', sku_count:8, units:781, capacity:1000, capacity_pct:78, status:'healthy' },
+    { id:2, code:'GUR-SAT', name:'Gurugram Satellite Store', address:'Udyog Vihar, Gurugram', sku_count:5, units:214, capacity:300, capacity_pct:71, status:'healthy' },
+    { id:3, code:'NOI-NTH', name:'Noida North Store', address:'Sector 63, Noida', sku_count:4, units:133, capacity:150, capacity_pct:89, status:'watch' },
   ],
   transfers: [
     { id:1, reference:'TR-260921-2A7F', from_warehouse:'DEL-MAIN', to_warehouse:'GUR-SAT', sku:'BRK-1048', product:'Ceramic Brake Pad Set', quantity:12, status:'completed', created_at:'2026-09-21T10:25:00+05:30' },
@@ -121,6 +126,11 @@ export const supplierPerformanceState = {
   suppliers: suppliers.map(s => ({ id:s.id, name:s.name, lead_time_days:s.lead_time_days, rating:s.rating, po_count:2, received_count:1, on_time_rate:100, fill_rate:92, latest_cost:null })),
   plans: reorderSuggestions().map(x => ({ sku:x.sku, product:x.name, supplier:x.supplier, stock_qty:x.stock_qty, reorder_level:x.reorder_level, suggested_qty:x.suggested_qty, lead_time_days:suppliers.find(s=>s.name===x.supplier)?.lead_time_days||3, expected_stockout:'2026-09-24' })),
   prices: [{ id:1, supplier:'TorqueLine Components', sku:'BRK-1048', product:'Ceramic Brake Pad Set', unit_cost:1519, captured_at:'2026-09-21T09:00:00+05:30' }],
+  contracts: [
+    { id:1, supplier:'TorqueLine Components', contract_no:'TL-2026-04', expires_on:'2026-10-15', payment_terms:'Net 30', annual_value:1850000, status:'expiring' },
+    { id:2, supplier:'VoltEdge Electricals', contract_no:'VE-2026-02', expires_on:'2027-02-28', payment_terms:'Net 15', annual_value:1260000, status:'active' },
+    { id:3, supplier:'ForgeFast Hardware', contract_no:'FF-2025-09', expires_on:'2026-11-30', payment_terms:'Net 45', annual_value:780000, status:'review' },
+  ],
 }
 
 const demandHistory = { 'BRK-1048': 30, 'FLT-2210': 72, 'BLT-0812': 540, 'BRG-6204': 42, 'MCB-C32': 50, 'RLY-24V4': 90, 'HLM-H7': 24, 'CBL-25R': 18 }
@@ -179,6 +189,13 @@ export function analyticsData(){
   const vendor={}; inventory.forEach(p=>{vendor[p.supplier]=(vendor[p.supplier]||0)+1})
   return {
     metrics:{sales_total:salesFlow.orders.reduce((s,o)=>s+o.total,0),invoice_total:salesFlow.invoices.reduce((s,i)=>s+i.total,0),inventory_value:inventoryValue,inventory_cost:inventoryCost,estimated_inventory_margin:Math.max(0,inventoryValue-inventoryCost),outstanding:customers.reduce((s,c)=>s+c.outstanding_balance,0),quote_conversion:quotations.length?Math.round(quotations.filter(q=>q.status==='approved').length/quotations.length*1000)/10:0,low_stock:inventory.filter(p=>p.stock_qty<=p.reorder_level).length},
+    operations:{open_purchase_orders:purchaseOrders.filter(x=>!['received','cancelled'].includes(x.status)).length,open_rfqs:rfqState.items.filter(x=>!['selected','closed'].includes(x.status)).length,receiving_exceptions:receivingState.orders.reduce((s,o)=>s+o.invoices.filter(i=>i.status==='exception').length,0),warehouse_units:warehouseState.warehouses.reduce((s,w)=>s+w.units,0),at_risk_suppliers:supplierPerformanceState.suppliers.filter(x=>x.on_time_rate!==null&&x.on_time_rate<95).length},
+    alerts:[
+      { id:1, severity:'urgent', title:'RLY-24V4 is out of stock', detail:'Demand planning recommends a 90-unit replenishment.' },
+      { id:2, severity:'watch', title:'Noida North is at 89% capacity', detail:'Move slow-moving stock before the next inbound receipt.' },
+      { id:3, severity:'review', title:'TorqueLine contract expires soon', detail:'Renewal decision required before 15 Oct 2026.' },
+      { id:4, severity:'review', title:'Supplier invoice exception', detail:'VE-INV-8821 includes damaged units in its billed quantity.' },
+    ],
     categories:Object.entries(counts).map(([label,value])=>({label,value})),suppliers:Object.entries(vendor).map(([label,value])=>({label,value})),top_customers:[...customers].sort((a,b)=>b.outstanding_balance-a.outstanding_balance).map(c=>({label:c.company||c.name,value:c.outstanding_balance})).slice(0,6)
   }
 }

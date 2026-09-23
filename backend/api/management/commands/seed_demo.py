@@ -5,7 +5,7 @@ from django.utils import timezone
 from api.models import (
     ApprovalRequest, AuditLog, Customer, Invoice, Notification, PriceRule, Product,
     Profile, PurchaseOrder, PurchaseOrderItem, Quotation, SalesOrder, StockMovement, DemandHistory, RFQ, RFQOffer,
-    StockTransfer, Supplier, VehicleFitment, Warehouse, WarehouseStock,
+    StockTransfer, Supplier, SupplierContract, VehicleFitment, Warehouse, WarehouseStock,
 )
 
 USERS = [
@@ -51,6 +51,13 @@ class Command(BaseCommand):
         for name, contact, email, phone, lead, rating in supplier_rows:
             supplier, _ = Supplier.objects.update_or_create(name=name, defaults={"contact_name": contact, "email": email, "phone": phone, "lead_time_days": lead, "rating": rating, "active": True})
             suppliers[name] = supplier
+
+        for contract_no, supplier_name, expires_on, terms, annual_value, status in [
+            ("TL-2026-04", "TorqueLine Components", date(2026, 10, 15), "Net 30", 1850000, "expiring"),
+            ("VE-2026-02", "VoltEdge Electricals", date(2027, 2, 28), "Net 15", 1260000, "active"),
+            ("FF-2025-09", "ForgeFast Hardware", date(2026, 11, 30), "Net 45", 780000, "review"),
+        ]:
+            SupplierContract.objects.update_or_create(contract_no=contract_no, defaults={"supplier": suppliers[supplier_name], "expires_on": expires_on, "payment_terms": terms, "annual_value": annual_value, "status": status})
 
         products = {}
         for row in PRODUCTS:

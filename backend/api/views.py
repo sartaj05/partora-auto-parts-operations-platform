@@ -10,7 +10,7 @@ from django.http import JsonResponse
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 from .auth import api_login_required, issue_token, roles_allowed
-from .models import Product, Quotation, StockMovement, Supplier, VehicleFitment, PurchaseOrder, PurchaseOrderItem, GoodsReceipt, GoodsReceiptLine, SupplierInvoice, Warehouse, WarehouseStock, StockTransfer, SalesOrder, SalesOrderItem, Invoice, Payment, ReturnRequest, InventoryCount, InventoryCountLine, ProductLot, SupplierPriceSnapshot, Customer, CustomerPortalToken, PriceRule, Notification, ApprovalRequest, AuditLog, DemandHistory, PurchasePlan, RFQ, RFQOffer
+from .models import Product, Quotation, StockMovement, Supplier, SupplierContract, VehicleFitment, PurchaseOrder, PurchaseOrderItem, GoodsReceipt, GoodsReceiptLine, SupplierInvoice, Warehouse, WarehouseStock, StockTransfer, SalesOrder, SalesOrderItem, Invoice, Payment, ReturnRequest, InventoryCount, InventoryCountLine, ProductLot, SupplierPriceSnapshot, Customer, CustomerPortalToken, PriceRule, Notification, ApprovalRequest, AuditLog, DemandHistory, PurchasePlan, RFQ, RFQOffer
 from .serializers import product_dict, quotation_dict, supplier_dict
 
 ROLE_MODULES = {
@@ -242,6 +242,18 @@ def fitments_view(request):
         return JsonResponse({"items": items, "count": qs.count()})
     if request.method == "POST":
         data = parse_body(request) or {}
+        if str(data.get("action", "")) == "decode_vin":
+            vin = str(data.get("vin", "")).replace(" ", "").upper()
+            vehicle_map = {
+                "MA3EJKD1S00A12345": {"make": "Maruti Suzuki", "model": "Swift", "year": 2022, "variant": "Petrol / AMT", "engine": "1.2L", "fuel": "Petrol"},
+                "MALBB51BLNM123456": {"make": "Hyundai", "model": "i20", "year": 2023, "variant": "Sportz", "engine": "1.2L", "fuel": "Petrol"},
+            }
+            vehicle = vehicle_map.get(vin) if len(vin) >= 8 else None
+            if not vehicle:
+                return JsonResponse({"detail": "Enter a supported demo VIN or a valid 8+ character VIN"}, status=400)
+            matches = VehicleFitment.objects.select_related("product").filter(make=vehicle["make"], model=vehicle["model"], year_from__lte=vehicle["year"], year_to__gte=vehicle["year"])
+            result = [{"id": f.id, "sku": f.product.sku, "product": f.product.name, "make": f.make, "model": f.model, "year_from": f.year_from, "year_to": f.year_to, "variant": f.variant, "engine": f.engine, "oem_number": f.oem_number, "stock_qty": f.product.stock_qty, "stock_status": "out" if f.product.stock_qty <= 0 else "low" if f.product.stock_qty <= f.product.reorder_level else "healthy", "fitment_confidence": "98%" if f.oem_number else "92%"} for f in matches]
+            return JsonResponse({"item": {"vin": vin, "vehicle": vehicle, "matches": result}})
         try:
             product = Product.objects.get(sku=str(data.get("sku", "")).strip().upper())
             fitment = VehicleFitment.objects.create(product=product, make=str(data["make"]).strip(), model=str(data["model"]).strip(), year_from=int(data["year_from"]), year_to=int(data.get("year_to") or data["year_from"]), variant=str(data.get("variant", "")).strip(), engine=str(data.get("engine", "")).strip(), oem_number=str(data.get("oem_number", "")).strip())
@@ -580,7 +592,8 @@ def supplier_performance_view(request):
         for product in Product.objects.select_related("supplier").filter(stock_qty__lte=F("reorder_level"),supplier__isnull=False).order_by("stock_qty")[:100]:
             plans.append({"sku":product.sku,"product":product.name,"supplier":product.supplier.name,"stock_qty":product.stock_qty,"reorder_level":product.reorder_level,"suggested_qty":max(product.reorder_qty,product.reorder_level*2-product.stock_qty),"lead_time_days":product.supplier.lead_time_days,"expected_stockout":(timezone.localdate()+timedelta(days=product.supplier.lead_time_days)).isoformat()})
         prices=[{"id":s.id,"supplier":s.supplier.name,"sku":s.product.sku,"product":s.product.name,"unit_cost":float(s.unit_cost),"captured_at":s.captured_at.isoformat()} for s in SupplierPriceSnapshot.objects.select_related("supplier","product").order_by("-captured_at")[:30]]
-        return JsonResponse({"suppliers":suppliers,"plans":plans,"prices":prices})
+        contracts=[{"id":c.id,"supplier":c.supplier.name,"contract_no":c.contract_no,"expires_on":c.expires_on.isoformat(),"payment_terms":c.payment_terms,"annual_value":float(c.annual_value),"status":c.status} for c in SupplierContract.objects.select_related("supplier").order_by("expires_on")[:100]]
+        return JsonResponse({"suppliers":suppliers,"plans":plans,"prices":prices,"contracts":contracts})
     data=parse_body(request) or {}
     try:
         supplier=Supplier.objects.get(name=str(data["supplier"]).strip()); product=Product.objects.get(sku=str(data["sku"]).strip().upper()); snapshot=SupplierPriceSnapshot.objects.create(supplier=supplier,product=product,unit_cost=float(data["unit_cost"]))
@@ -1004,7 +1017,15 @@ def analytics_view(request):
     categories=[{"label":row["category"],"value":row["count"]} for row in Product.objects.values("category").annotate(count=Count("id")).order_by("-count")]
     suppliers=[{"label":row["supplier__name"] or "Unassigned","value":row["count"]} for row in Product.objects.values("supplier__name").annotate(count=Count("id")).order_by("-count")[:6]]
     top_customers=[{"label":c.company or c.name,"value":float(c.outstanding_balance)} for c in Customer.objects.filter(active=True).order_by("-outstanding_balance")[:6]]
-    return JsonResponse({"metrics":{"sales_total":sales_total,"invoice_total":invoice_total,"inventory_value":inventory_value,"inventory_cost":inventory_cost,"estimated_inventory_margin":max(0,inventory_value-inventory_cost),"outstanding":outstanding,"quote_conversion":round((approved/quotes_total*100),1) if quotes_total else 0,"low_stock":sum(1 for p in products if p.stock_qty<=p.reorder_level)},"categories":categories,"suppliers":suppliers,"top_customers":top_customers})
+    low_stock=sum(1 for p in products if p.stock_qty<=p.reorder_level)
+    open_purchase_orders=PurchaseOrder.objects.filter(status__in=["approved","ordered","partial"]).count()
+    open_rfqs=RFQ.objects.filter(status__in=["sent","quoted"]).count()
+    invoice_exceptions=SupplierInvoice.objects.filter(status="exception").count()
+    alerts=[]
+    if low_stock: alerts.append({"id":"stock","severity":"urgent","title":f"{low_stock} SKU(s) need replenishment","detail":"Review the demand plan and raise the next purchase request."})
+    if invoice_exceptions: alerts.append({"id":"invoice","severity":"review","title":f"{invoice_exceptions} supplier invoice exception(s)","detail":"Check received quantities and approve only after the discrepancy is resolved."})
+    if open_rfqs: alerts.append({"id":"rfq","severity":"watch","title":f"{open_rfqs} sourcing request(s) are open","detail":"Compare supplier quotes and select the best offer."})
+    return JsonResponse({"metrics":{"sales_total":sales_total,"invoice_total":invoice_total,"inventory_value":inventory_value,"inventory_cost":inventory_cost,"estimated_inventory_margin":max(0,inventory_value-inventory_cost),"outstanding":outstanding,"quote_conversion":round((approved/quotes_total*100),1) if quotes_total else 0,"low_stock":low_stock},"operations":{"open_purchase_orders":open_purchase_orders,"open_rfqs":open_rfqs,"receiving_exceptions":invoice_exceptions,"warehouse_units":WarehouseStock.objects.aggregate(total=Sum("quantity"))["total"] or 0,"at_risk_suppliers":0},"alerts":alerts,"categories":categories,"suppliers":suppliers,"top_customers":top_customers})
 
 @csrf_exempt
 @api_login_required

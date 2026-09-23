@@ -28,6 +28,20 @@ class Supplier(models.Model):
         return self.name
 
 
+class SupplierContract(models.Model):
+    STATUS_CHOICES = [("active", "Active"), ("expiring", "Expiring soon"), ("review", "Needs review")]
+    supplier = models.ForeignKey(Supplier, on_delete=models.CASCADE, related_name="contracts")
+    contract_no = models.CharField(max_length=40, unique=True)
+    expires_on = models.DateField()
+    payment_terms = models.CharField(max_length=80, blank=True)
+    annual_value = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="active")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["expires_on", "supplier__name"]
+
+
 class Product(models.Model):
     CATEGORY_CHOICES = [
         ("auto", "Auto Parts"),
