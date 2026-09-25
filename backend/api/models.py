@@ -82,6 +82,9 @@ class Quotation(models.Model):
     customer_name = models.CharField(max_length=140)
     customer_company = models.CharField(max_length=140, blank=True)
     total = models.DecimalField(max_digits=12, decimal_places=2)
+    subtotal = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    tax_rate = models.DecimalField(max_digits=5, decimal_places=2, default=0)
+    tax_total = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="draft")
     valid_until = models.DateField()
     created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name="quotations")
@@ -89,6 +92,14 @@ class Quotation(models.Model):
 
     def __str__(self):
         return self.quote_no
+
+
+class QuotationItem(models.Model):
+    quotation = models.ForeignKey(Quotation, on_delete=models.CASCADE, related_name="items")
+    product = models.ForeignKey(Product, on_delete=models.PROTECT, related_name="quotation_items")
+    quantity = models.PositiveIntegerField(default=1)
+    unit_price = models.DecimalField(max_digits=12, decimal_places=2)
+    line_total = models.DecimalField(max_digits=12, decimal_places=2)
 
 
 class StockMovement(models.Model):

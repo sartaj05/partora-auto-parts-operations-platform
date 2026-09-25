@@ -10,7 +10,7 @@ from django.http import JsonResponse
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 from .auth import api_login_required, get_current_organization, issue_token, roles_allowed
-from .models import Product, Quotation, StockMovement, Supplier, SupplierContract, VehicleFitment, PurchaseOrder, PurchaseOrderItem, GoodsReceipt, GoodsReceiptLine, SupplierInvoice, Warehouse, WarehouseStock, StockTransfer, SalesOrder, SalesOrderItem, Invoice, Payment, ReturnRequest, InventoryCount, InventoryCountLine, ProductLot, SupplierPriceSnapshot, Customer, CustomerPortalToken, PriceRule, Notification, ApprovalRequest, AuditLog, DemandHistory, PurchasePlan, RFQ, RFQOffer, IntegrationConnection, WebhookSubscription, IntegrationLog, PwaDevice, SyncConflict, AutomationRule, AutomationRun, FleetVehicle, FleetWorkOrder, SupportTicket, SupportCommunication, DeliveryRoute, Shipment, Organization, OrganizationMembership, OrganizationInvitation, StockLedgerEntry, StockReservation
+from .models import Product, Quotation, QuotationItem, StockMovement, Supplier, SupplierContract, VehicleFitment, PurchaseOrder, PurchaseOrderItem, GoodsReceipt, GoodsReceiptLine, SupplierInvoice, Warehouse, WarehouseStock, StockTransfer, SalesOrder, SalesOrderItem, Invoice, Payment, ReturnRequest, InventoryCount, InventoryCountLine, ProductLot, SupplierPriceSnapshot, Customer, CustomerPortalToken, PriceRule, Notification, ApprovalRequest, AuditLog, DemandHistory, PurchasePlan, RFQ, RFQOffer, IntegrationConnection, WebhookSubscription, IntegrationLog, PwaDevice, SyncConflict, AutomationRule, AutomationRun, FleetVehicle, FleetWorkOrder, SupportTicket, SupportCommunication, DeliveryRoute, Shipment, Organization, OrganizationMembership, OrganizationInvitation, StockLedgerEntry, StockReservation
 from .serializers import product_dict, quotation_dict, supplier_dict
 
 ROLE_MODULES = {
@@ -158,12 +158,20 @@ def quotations_view(request):
             return JsonResponse({"detail": "Customer name is required"}, status=400)
         try:
             valid_until = date.fromisoformat(str(data["valid_until"])) if data.get("valid_until") else timezone.localdate()
+            raw_items=data.get("items") or []
+            if isinstance(raw_items,str): raw_items=json.loads(raw_items or "[]")
+            tax_rate=Decimal(str(data.get("tax_rate",0) or 0)); line_total=Decimal("0")
+            prepared=[]
+            for line in raw_items:
+                product=Product.objects.get(sku=str(line["sku"]).strip().upper()); quantity=max(1,int(line.get("quantity",1))); unit_price=Decimal(str(line.get("unit_price") or product.price)); total_line=unit_price*quantity; line_total += total_line; prepared.append((product,quantity,unit_price,total_line))
+            subtotal=line_total if prepared else Decimal(str(data.get("total",0) or 0)); tax_total=(subtotal*tax_rate/Decimal("100")).quantize(Decimal("0.01")); total=subtotal+tax_total
             quote = Quotation.objects.create(
                 quote_no=f"QT-{timezone.now():%y%m%d}-{uuid4().hex[:4].upper()}",
                 customer_name=str(data["customer_name"]).strip(), customer_company=str(data.get("customer_company", "")).strip(),
-                total=float(data.get("total", 0)), status=str(data.get("status", "draft")),
+                total=total, subtotal=subtotal, tax_rate=tax_rate, tax_total=tax_total, status=str(data.get("status", "draft")),
                 valid_until=valid_until, created_by=request.api_user,
             )
+            QuotationItem.objects.bulk_create([QuotationItem(quotation=quote,product=product,quantity=quantity,unit_price=unit_price,line_total=total_line) for product,quantity,unit_price,total_line in prepared])
         except Exception as exc:
             return JsonResponse({"detail": f"Could not create quotation: {exc}"}, status=400)
         record_audit(request, "create", "quotation", quote.id, quote.quote_no)
@@ -791,9 +799,11 @@ def sales_flow_view(request):
         try:
             if action == "convert_quote":
                 quote=Quotation.objects.get(id=int(data["quote_id"]))
+                if quote.status not in {"approved", "sent"}: raise ValueError("Only sent or approved quotes can become sales orders")
                 order,created=SalesOrder.objects.get_or_create(quotation=quote,defaults={"order_no":f"SO-{timezone.now():%y%m%d}-{uuid4().hex[:4].upper()}","customer_name":quote.customer_name,"customer_company":quote.customer_company,"total":quote.total,"status":"confirmed","created_by":request.api_user})
                 if created:
-                    for line in data.get("items", []):
+                    source_items=data.get("items") or [{"sku":line.product.sku,"quantity":line.quantity,"unit_price":line.unit_price} for line in quote.items.select_related("product").all()]
+                    for line in source_items:
                         product=Product.objects.get(sku=str(line["sku"]).strip().upper())
                         quantity=max(1, int(line.get("quantity", 1)))
                         unit_price=float(line.get("unit_price") or product.price)

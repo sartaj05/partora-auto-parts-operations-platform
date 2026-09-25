@@ -4,7 +4,7 @@ from django.contrib.auth.models import User
 from django.test import TestCase
 
 from .auth import issue_token
-from .models import AutomationRule, DemandHistory, FleetVehicle, GoodsReceipt, IntegrationConnection, Organization, OrganizationInvitation, OrganizationMembership, Product, Profile, PurchaseOrder, PurchasePlan, RFQ, RFQOffer, SalesOrder, SalesOrderItem, StockLedgerEntry, StockReservation, SupportTicket, Supplier, SupplierContract, SupplierInvoice, VehicleFitment
+from .models import AutomationRule, DemandHistory, FleetVehicle, GoodsReceipt, IntegrationConnection, Organization, OrganizationInvitation, OrganizationMembership, Product, Profile, PurchaseOrder, PurchasePlan, QuotationItem, RFQ, RFQOffer, SalesOrder, SalesOrderItem, StockLedgerEntry, StockReservation, SupportTicket, Supplier, SupplierContract, SupplierInvoice, VehicleFitment
 
 
 class DemandPlanningApiTests(TestCase):
@@ -342,3 +342,26 @@ class DemandPlanningApiTests(TestCase):
         self.product.refresh_from_db()
         self.assertEqual(self.product.reserved_qty, 1)
         self.assertEqual(StockReservation.objects.filter(sales_order=order, status="active").count(), 1)
+
+    def test_quote_line_items_calculate_tax_and_convert_to_order(self):
+        response = self.client.post(
+            "/api/quotations/",
+            data={"customer_name": "Line Customer", "customer_company": "Line Co", "valid_until": "2030-01-01", "status": "approved", "tax_rate": 18, "items": [{"sku": "TEST-001", "quantity": 2, "unit_price": 100}]},
+            content_type="application/json",
+            **self.auth_headers(self.manager),
+        )
+        self.assertEqual(response.status_code, 201)
+        quote = response.json()["item"]
+        self.assertEqual(quote["subtotal"], 200.0)
+        self.assertEqual(quote["tax_total"], 36.0)
+        self.assertEqual(quote["total"], 236.0)
+        self.assertEqual(QuotationItem.objects.filter(quotation_id=quote["id"]).count(), 1)
+
+        converted = self.client.post(
+            "/api/sales-flow/",
+            data={"action": "convert_quote", "quote_id": quote["id"]},
+            content_type="application/json",
+            **self.auth_headers(self.manager),
+        )
+        self.assertEqual(converted.status_code, 201)
+        self.assertEqual(converted.json()["item"]["items"][0]["sku"], "TEST-001")
