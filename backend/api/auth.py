@@ -1,8 +1,12 @@
+import hashlib
+from datetime import timedelta
 from functools import wraps
+from uuid import uuid4
 from django.conf import settings
 from django.core import signing
 from django.http import JsonResponse
 from django.contrib.auth.models import User
+from django.utils import timezone
 
 TOKEN_SALT = "partora.auth"
 
@@ -57,8 +61,21 @@ def has_permission(user, module, action, organization=None):
     grant = RolePermission.objects.filter(role=role, permission=permission).values_list("allowed", flat=True).first()
     return permission_defaults(role, module, action) if grant is None else bool(grant)
 
-def issue_token(user):
-    return signing.dumps({"uid": user.id}, salt=TOKEN_SALT, compress=True)
+def issue_token(user, request=None):
+    token = signing.dumps({"uid": user.id, "nonce": uuid4().hex}, salt=TOKEN_SALT, compress=True)
+    from .models import UserSession
+
+    organization = get_current_organization(user)
+    UserSession.objects.create(
+        token_hash=hashlib.sha256(token.encode()).hexdigest(),
+        user=user,
+        organization=organization,
+        device=(request.headers.get("User-Agent", "")[:160] if request else "API client"),
+        ip_address=(request.META.get("REMOTE_ADDR") if request else None),
+        user_agent=(request.headers.get("User-Agent", "")[:300] if request else ""),
+        expires_at=timezone.now() + timedelta(seconds=settings.PARTORA_TOKEN_MAX_AGE),
+    )
+    return token
 
 def get_user_from_request(request):
     header = request.headers.get("Authorization", "")
@@ -67,6 +84,11 @@ def get_user_from_request(request):
     token = header[7:].strip()
     try:
         payload = signing.loads(token, salt=TOKEN_SALT, max_age=settings.PARTORA_TOKEN_MAX_AGE)
+        from .models import UserSession
+        session = UserSession.objects.filter(token_hash=hashlib.sha256(token.encode()).hexdigest(), revoked_at__isnull=True, expires_at__gt=timezone.now()).first()
+        if not session or session.user_id != payload["uid"]:
+            return None
+        UserSession.objects.filter(id=session.id).update(last_seen=timezone.now())
         return User.objects.select_related("profile").get(id=payload["uid"], is_active=True)
     except Exception:
         return None

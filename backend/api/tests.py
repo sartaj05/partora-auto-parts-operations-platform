@@ -5,7 +5,7 @@ from django.test import TestCase
 from django.utils import timezone
 
 from .auth import issue_token
-from .models import ApprovalRequest, AuditLog, AutomationRule, Customer, CustomerPortalToken, DemandHistory, FinanceTaxRule, FleetVehicle, GoodsReceipt, IntegrationConnection, Invoice, MobileTask, Organization, OrganizationInvitation, OrganizationMembership, Payment, PermissionDefinition, PortalAccessLog, Product, Profile, PurchaseOrder, PurchaseOrderStatusEvent, PurchasePlan, PwaDevice, QuotationItem, Quotation, RFQ, RFQOffer, RolePermission, SalesOrder, SalesOrderItem, StockLedgerEntry, StockReservation, SupportTicket, Supplier, SupplierContract, SupplierInvoice, SyncConflict, VehicleFitment, Warehouse, WebhookDelivery, WebhookSubscription
+from .models import ApprovalRequest, AuditLog, AutomationRule, Customer, CustomerPortalToken, DemandHistory, FinanceTaxRule, FleetVehicle, GoodsReceipt, IntegrationConnection, Invoice, MobileTask, Organization, OrganizationInvitation, OrganizationMembership, Payment, PermissionDefinition, PortalAccessLog, Product, Profile, PurchaseOrder, PurchaseOrderStatusEvent, PurchasePlan, PwaDevice, QuotationItem, Quotation, RFQ, RFQOffer, RolePermission, SalesOrder, SalesOrderItem, StockLedgerEntry, StockReservation, SupportTicket, Supplier, SupplierContract, SupplierInvoice, SyncConflict, UserSecurityProfile, UserSession, VehicleFitment, Warehouse, WebhookDelivery, WebhookSubscription
 
 
 class DemandPlanningApiTests(TestCase):
@@ -560,3 +560,15 @@ class DemandPlanningApiTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["events"][0]["ip_address"], "127.0.0.1")
         self.assertEqual(response.json()["events"][0]["branch"], "All branches")
+
+    def test_login_creates_revocable_session_and_security_is_persistent(self):
+        login = self.client.post("/api/auth/login/", data={"email": "manager@example.com", "password": "demo123"}, content_type="application/json")
+        self.assertEqual(login.status_code, 200)
+        manager_token = login.json()["token"]
+        session = UserSession.objects.get(token_hash=__import__("hashlib").sha256(manager_token.encode()).hexdigest())
+        security = self.client.get("/api/security/", **self.auth_headers(self.admin))
+        self.assertEqual(security.status_code, 200)
+        self.assertTrue(any(user["id"] == self.manager.id for user in security.json()["users"]))
+        terminate = self.client.post("/api/security/", data={"action":"terminate","id":session.id}, content_type="application/json", **self.auth_headers(self.admin))
+        self.assertEqual(terminate.status_code, 200)
+        self.assertEqual(self.client.get("/api/dashboard/", HTTP_AUTHORIZATION=f"Bearer {manager_token}").status_code, 401)

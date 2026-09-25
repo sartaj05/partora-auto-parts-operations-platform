@@ -14,7 +14,7 @@ from django.http import JsonResponse
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 from .auth import ROLE_MODULES, api_login_required, get_current_organization, get_effective_role, get_permission_map, has_permission, issue_token, roles_allowed
-from .models import Product, Quotation, QuotationItem, StockMovement, Supplier, SupplierContract, VehicleFitment, PurchaseOrder, PurchaseOrderItem, PurchaseOrderStatusEvent, GoodsReceipt, GoodsReceiptLine, SupplierInvoice, Warehouse, WarehouseStock, StockTransfer, SalesOrder, SalesOrderItem, Invoice, Payment, FinanceTaxRule, ReturnRequest, InventoryCount, InventoryCountLine, ProductLot, SupplierPriceSnapshot, Customer, CustomerPortalToken, PortalAccessLog, PriceRule, Notification, ApprovalRequest, AuditLog, DemandHistory, PurchasePlan, RFQ, RFQOffer, IntegrationConnection, WebhookSubscription, IntegrationLog, WebhookDelivery, PwaDevice, SyncConflict, MobileTask, AutomationRule, AutomationRun, FleetVehicle, FleetWorkOrder, SupportTicket, SupportCommunication, DeliveryRoute, Shipment, Organization, OrganizationMembership, OrganizationInvitation, StockLedgerEntry, StockReservation, PermissionDefinition, RolePermission, Profile
+from .models import Product, Quotation, QuotationItem, StockMovement, Supplier, SupplierContract, VehicleFitment, PurchaseOrder, PurchaseOrderItem, PurchaseOrderStatusEvent, GoodsReceipt, GoodsReceiptLine, SupplierInvoice, Warehouse, WarehouseStock, StockTransfer, SalesOrder, SalesOrderItem, Invoice, Payment, FinanceTaxRule, ReturnRequest, InventoryCount, InventoryCountLine, ProductLot, SupplierPriceSnapshot, Customer, CustomerPortalToken, PortalAccessLog, PriceRule, Notification, ApprovalRequest, AuditLog, DemandHistory, PurchasePlan, RFQ, RFQOffer, IntegrationConnection, WebhookSubscription, IntegrationLog, WebhookDelivery, PwaDevice, SyncConflict, MobileTask, AutomationRule, AutomationRun, FleetVehicle, FleetWorkOrder, SupportTicket, SupportCommunication, DeliveryRoute, Shipment, Organization, OrganizationMembership, OrganizationInvitation, StockLedgerEntry, StockReservation, PermissionDefinition, RolePermission, Profile, UserSecurityProfile, UserSession
 from .serializers import product_dict, quotation_dict, supplier_dict
 
 def parse_body(request):
@@ -47,7 +47,7 @@ def login_view(request):
     organization = get_current_organization(user)
     role = get_effective_role(user, organization)
     return JsonResponse({
-        "token": issue_token(user),
+        "token": issue_token(user, request),
         "user": {"id": user.id, "name": user.get_full_name() or email.split("@")[0].title(), "email": user.email or email, "role": role},
         "modules": ROLE_MODULES[role],
         "permissions": get_permission_map(role),
@@ -803,7 +803,7 @@ def customer_service_view(request):
 
 @csrf_exempt
 @roles_allowed("admin")
-def security_view(request):
+def legacy_security_view(request):
     users=[{"id":1,"name":"Aarav Admin","role":"admin","mfa":"enabled","last_login":timezone.now().isoformat(),"risk":"low"},{"id":2,"name":"Meera Manager","role":"manager","mfa":"pending","last_login":(timezone.now()-timedelta(minutes=20)).isoformat(),"risk":"medium"},{"id":3,"name":"Rohan Sales","role":"sales","mfa":"enabled","last_login":(timezone.now()-timedelta(hours=1)).isoformat(),"risk":"low"}]
     sessions=[{"id":1,"user":"Aarav Admin","device":"Chrome - Windows","location":"New Delhi","last_seen":timezone.now().isoformat(),"status":"active"},{"id":2,"user":"Kabir Store","device":"Android PWA","location":"Gurugram","last_seen":(timezone.now()-timedelta(minutes=6)).isoformat(),"status":"active"}]
     alerts=[{"id":1,"type":"mfa","title":"Manager MFA enrollment pending","detail":"Manager enrollment is required before high-value approvals.","status":"open"},{"id":2,"type":"session","title":"Idle session exceeds policy","detail":"Review the oldest active browser session.","status":"open"}]
@@ -815,6 +815,40 @@ def security_view(request):
     if action == "resolve": item={"id":data.get("id"),"status":"resolved"}
     if action == "export": item={"format":"csv","filename":f"partora-security-{timezone.localdate().isoformat()}.csv","rows":AuditLog.objects.count()}
     record_audit(request,"security action","security",item.get("id") or "export",action); return JsonResponse({"item":item})
+
+
+@csrf_exempt
+@roles_allowed("admin")
+def security_view(request):
+    organization=request.organization
+    if request.method == "GET":
+        memberships=organization.memberships.select_related("user", "user__profile").filter(active=True).order_by("user__first_name")
+        users=[]
+        for membership in memberships:
+            profile, _ = UserSecurityProfile.objects.get_or_create(user=membership.user)
+            users.append({"id":membership.user_id,"name":membership.user.get_full_name() or membership.user.username,"role":membership.role,"mfa":"enabled" if profile.mfa_enabled else "pending","mfa_required":profile.mfa_required,"last_login":membership.user.last_login.isoformat() if membership.user.last_login else None,"risk":"low" if profile.mfa_enabled else "medium"})
+        session_rows=[]
+        for session in UserSession.objects.select_related("user").filter(organization=organization,revoked_at__isnull=True,expires_at__gt=timezone.now()).order_by("-last_seen")[:100]:
+            session_rows.append({"id":session.id,"user":session.user.get_full_name() or session.user.username,"device":session.device or "API client","location":session.ip_address or "Unknown","last_seen":session.last_seen.isoformat(),"status":"active"})
+        audits=AuditLog.objects.filter(organization=organization).order_by("-created_at")[:50]
+        audit=[{"id":a.id,"actor":a.user.get_full_name() if a.user else "System","action":a.action,"target":a.entity_id,"result":a.result,"created_at":a.created_at.isoformat()} for a in audits]
+        total_users=len(users); mfa_count=sum(1 for user in users if user["mfa"] == "enabled")
+        return JsonResponse({"summary":{"mfa_coverage":round(mfa_count/total_users*100) if total_users else 0,"active_sessions":len(session_rows),"open_alerts":sum(1 for user in users if user["mfa"] != "enabled"),"audit_events":AuditLog.objects.filter(organization=organization).count()},"users":users,"sessions":session_rows,"alerts":[],"audit":audit})
+    data=parse_body(request) or {}; action=str(data.get("action", "export"))
+    if action == "mfa":
+        target=User.objects.filter(id=int(data["id"])).first()
+        if not target: return JsonResponse({"detail":"User not found"},status=404)
+        profile, _ = UserSecurityProfile.objects.get_or_create(user=target); profile.mfa_enabled=True; profile.mfa_required=True; profile.backup_codes_remaining=max(profile.backup_codes_remaining, 10); profile.save(update_fields=["mfa_enabled","mfa_required","backup_codes_remaining","updated_at"])
+        record_audit(request,"enable MFA","user",target.id,target.username)
+        return JsonResponse({"item":{"id":target.id,"mfa":"enabled","mfa_required":True,"risk":"low"}})
+    if action == "terminate":
+        session=UserSession.objects.filter(id=int(data["id"]),organization=organization,revoked_at__isnull=True).first()
+        if not session: return JsonResponse({"detail":"Session not found"},status=404)
+        session.revoked_at=timezone.now(); session.save(update_fields=["revoked_at"]); record_audit(request,"terminate session","session",session.id,session.user.username)
+        return JsonResponse({"item":{"id":session.id,"status":"terminated"}})
+    if action == "export":
+        return JsonResponse({"item":{"format":"csv","filename":f"partora-security-{timezone.localdate().isoformat()}.csv","rows":AuditLog.objects.filter(organization=organization).count()}})
+    return JsonResponse({"detail":"Unknown security action"},status=400)
 
 
 @roles_allowed("admin", "manager")

@@ -16,6 +16,27 @@ class Profile(models.Model):
         return f"{self.user.username} ({self.role})"
 
 
+class UserSecurityProfile(models.Model):
+    user = models.OneToOneField(User, on_delete=models.CASCADE, related_name="security_profile")
+    mfa_enabled = models.BooleanField(default=False)
+    mfa_required = models.BooleanField(default=False)
+    backup_codes_remaining = models.PositiveIntegerField(default=0)
+    updated_at = models.DateTimeField(auto_now=True)
+
+
+class UserSession(models.Model):
+    token_hash = models.CharField(max_length=64, unique=True)
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="partora_sessions")
+    organization = models.ForeignKey("Organization", on_delete=models.CASCADE, null=True, blank=True, related_name="sessions")
+    device = models.CharField(max_length=160, blank=True)
+    ip_address = models.GenericIPAddressField(null=True, blank=True)
+    user_agent = models.CharField(max_length=300, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    last_seen = models.DateTimeField(auto_now=True)
+    expires_at = models.DateTimeField()
+    revoked_at = models.DateTimeField(null=True, blank=True)
+
+
 class PermissionDefinition(models.Model):
     ACTION_CHOICES = [
         ("view", "View"),
