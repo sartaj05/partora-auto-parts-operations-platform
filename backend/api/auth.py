@@ -6,6 +6,14 @@ from django.contrib.auth.models import User
 
 TOKEN_SALT = "partora.auth"
 
+ROLE_MODULES = {
+    "admin": ["dashboard", "inventory", "quotations", "suppliers", "stock", "barcodes", "fitments", "purchase_orders", "receiving", "mobile_warehouse", "warehouses", "reorder", "demand_planning", "rfq", "sales_flow", "fulfillment", "notifications", "copilot", "finance", "warranty_intelligence", "integrations", "pwa_admin", "tenancy", "automation", "fleet", "security", "documents", "delivery", "partner_api", "predictive_fleet", "customer_service", "saas_billing", "observability", "inventory_network", "returns", "inventory_control", "supplier_performance", "portal", "crm", "pricing", "analytics", "governance"],
+    "manager": ["dashboard", "inventory", "quotations", "suppliers", "stock", "barcodes", "fitments", "purchase_orders", "receiving", "mobile_warehouse", "warehouses", "reorder", "demand_planning", "rfq", "sales_flow", "fulfillment", "notifications", "copilot", "finance", "warranty_intelligence", "integrations", "tenancy", "automation", "fleet", "delivery", "customer_service", "inventory_network", "returns", "inventory_control", "supplier_performance", "portal", "crm", "pricing", "analytics", "governance"],
+    "sales": ["dashboard", "inventory", "quotations", "barcodes", "fitments", "sales_flow", "fulfillment", "notifications", "copilot", "customer_service", "portal", "crm", "pricing", "analytics"],
+    "store": ["dashboard", "inventory", "stock", "barcodes", "fitments", "purchase_orders", "receiving", "mobile_warehouse", "warehouses", "reorder", "fulfillment", "notifications", "returns", "inventory_control"],
+    "client": ["client_portal"],
+}
+
 def issue_token(user):
     return signing.dumps({"uid": user.id}, salt=TOKEN_SALT, compress=True)
 
@@ -41,6 +49,12 @@ def get_current_branch(request, organization):
         return None
     return Warehouse.objects.filter(organization=organization, code=branch_code, active=True).first()
 
+
+def get_effective_role(user, organization=None):
+    organization = organization or get_current_organization(user)
+    membership = user.organization_memberships.filter(organization=organization, active=True).first()
+    return membership.role if membership else user.profile.role
+
 def api_login_required(view):
     @wraps(view)
     def wrapped(request, *args, **kwargs):
@@ -56,9 +70,10 @@ def roles_allowed(*roles):
         @wraps(view)
         @api_login_required
         def wrapped(request, *args, **kwargs):
-            if request.api_user.profile.role not in roles:
-                return JsonResponse({"detail": "You do not have access to this module"}, status=403)
             request.organization = get_current_organization(request.api_user)
+            request.effective_role = get_effective_role(request.api_user, request.organization)
+            if request.effective_role not in roles:
+                return JsonResponse({"detail": "You do not have access to this module"}, status=403)
             request.branch = get_current_branch(request, request.organization)
             return view(request, *args, **kwargs)
         return wrapped

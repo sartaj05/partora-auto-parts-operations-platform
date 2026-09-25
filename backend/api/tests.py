@@ -16,6 +16,9 @@ class DemandPlanningApiTests(TestCase):
         self.store = User.objects.create_user("store@example.com", "store@example.com", "demo123")
         self.store.profile.role = "store"
         self.store.profile.save(update_fields=["role"])
+        self.admin = User.objects.create_user("admin@example.com", "admin@example.com", "demo123")
+        self.admin.profile.role = "admin"
+        self.admin.profile.save(update_fields=["role"])
         self.supplier = Supplier.objects.create(name="Test Components", lead_time_days=3, rating=4.5)
         self.product = Product.objects.create(
             sku="TEST-001", name="Test Filter", brand="TestBrand", category="auto", supplier=self.supplier,
@@ -186,7 +189,7 @@ class DemandPlanningApiTests(TestCase):
 
     def test_client_demo_operations_endpoints_are_available(self):
         for path in ("/api/mobile-warehouse/", "/api/notifications/", "/api/finance/", "/api/warranty/"):
-            response = self.client.get(path, **self.auth_headers(self.manager))
+            response = self.client.get(path, **self.auth_headers(self.admin))
             self.assertEqual(response.status_code, 200, path)
 
         response = self.client.post(
@@ -207,7 +210,7 @@ class DemandPlanningApiTests(TestCase):
             ("/api/automation/", "rules"),
             ("/api/fleet/", "vehicles"),
         ):
-            response = self.client.get(path, **self.auth_headers(self.manager))
+            response = self.client.get(path, **self.auth_headers(self.admin))
             self.assertEqual(response.status_code, 200, path)
             self.assertIn(key, response.json())
 
@@ -219,7 +222,7 @@ class DemandPlanningApiTests(TestCase):
             ("/api/partner-api/", "keys"),
             ("/api/predictive-fleet/", "vehicles"),
         ):
-            response = self.client.get(path, **self.auth_headers(self.manager))
+            response = self.client.get(path, **self.auth_headers(self.admin))
             self.assertEqual(response.status_code, 200, path)
             self.assertIn(key, response.json())
 
@@ -229,12 +232,12 @@ class DemandPlanningApiTests(TestCase):
         self.assertIn("tickets", response.json())
 
     def test_saas_billing_endpoint_is_available(self):
-        response = self.client.get("/api/saas-billing/", **self.auth_headers(self.manager))
+        response = self.client.get("/api/saas-billing/", **self.auth_headers(self.admin))
         self.assertEqual(response.status_code, 200)
         self.assertIn("tenants", response.json())
 
     def test_observability_endpoint_is_available(self):
-        response = self.client.get("/api/observability/", **self.auth_headers(self.manager))
+        response = self.client.get("/api/observability/", **self.auth_headers(self.admin))
         self.assertEqual(response.status_code, 200)
         self.assertIn("services", response.json())
 
@@ -488,3 +491,17 @@ class DemandPlanningApiTests(TestCase):
         export = self.client.post("/api/finance/", data={"action": "export"}, content_type="application/json", **self.auth_headers(self.manager))
         self.assertEqual(export.status_code, 200)
         self.assertIn("INV-FIN-001", export.json()["item"]["rows"][1])
+
+    def test_role_matrix_limits_workspaces_and_admin_role_changes(self):
+        sales_login = self.client.post("/api/auth/login/", data={"email": "manager@example.com", "password": "demo123"}, content_type="application/json")
+        self.assertEqual(sales_login.status_code, 200)
+        self.assertIn("integrations", sales_login.json()["modules"])
+        self.assertNotIn("security", sales_login.json()["modules"])
+
+        self.assertEqual(self.client.get("/api/security/", **self.auth_headers(self.manager)).status_code, 403)
+        self.assertEqual(self.client.get("/api/stock/", **self.auth_headers(self.manager)).status_code, 200)
+        self.assertEqual(self.client.get("/api/quotations/", **self.auth_headers(self.store)).status_code, 403)
+
+        change = self.client.post("/api/tenancy/", data={"action": "role", "user_id": self.store.id, "role": "sales"}, content_type="application/json", **self.auth_headers(self.admin))
+        self.assertEqual(change.status_code, 200)
+        self.assertEqual(self.store.organization_memberships.first().role, "sales")

@@ -13,23 +13,9 @@ from django.db.models import Count, DecimalField, ExpressionWrapper, F, Max, Q, 
 from django.http import JsonResponse
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
-from .auth import api_login_required, get_current_organization, issue_token, roles_allowed
+from .auth import ROLE_MODULES, api_login_required, get_current_organization, get_effective_role, issue_token, roles_allowed
 from .models import Product, Quotation, QuotationItem, StockMovement, Supplier, SupplierContract, VehicleFitment, PurchaseOrder, PurchaseOrderItem, PurchaseOrderStatusEvent, GoodsReceipt, GoodsReceiptLine, SupplierInvoice, Warehouse, WarehouseStock, StockTransfer, SalesOrder, SalesOrderItem, Invoice, Payment, FinanceTaxRule, ReturnRequest, InventoryCount, InventoryCountLine, ProductLot, SupplierPriceSnapshot, Customer, CustomerPortalToken, PortalAccessLog, PriceRule, Notification, ApprovalRequest, AuditLog, DemandHistory, PurchasePlan, RFQ, RFQOffer, IntegrationConnection, WebhookSubscription, IntegrationLog, WebhookDelivery, PwaDevice, SyncConflict, MobileTask, AutomationRule, AutomationRun, FleetVehicle, FleetWorkOrder, SupportTicket, SupportCommunication, DeliveryRoute, Shipment, Organization, OrganizationMembership, OrganizationInvitation, StockLedgerEntry, StockReservation
 from .serializers import product_dict, quotation_dict, supplier_dict
-
-ROLE_MODULES = {
-    "admin": ["dashboard", "inventory", "quotations", "suppliers", "stock", "barcodes", "fitments", "purchase_orders", "receiving", "mobile_warehouse", "warehouses", "reorder", "demand_planning", "rfq", "sales_flow", "fulfillment", "notifications", "copilot", "finance", "warranty_intelligence", "integrations", "pwa_admin", "tenancy", "automation", "fleet", "security", "documents", "delivery", "partner_api", "predictive_fleet", "returns", "inventory_control", "supplier_performance", "portal", "crm", "pricing", "analytics", "governance"],
-    "manager": ["dashboard", "inventory", "quotations", "suppliers", "stock", "barcodes", "fitments", "purchase_orders", "receiving", "mobile_warehouse", "warehouses", "reorder", "demand_planning", "rfq", "sales_flow", "fulfillment", "notifications", "copilot", "finance", "warranty_intelligence", "integrations", "pwa_admin", "tenancy", "automation", "fleet", "security", "documents", "delivery", "partner_api", "predictive_fleet", "returns", "inventory_control", "supplier_performance", "portal", "crm", "pricing", "analytics", "governance"],
-    "sales": ["dashboard", "inventory", "quotations", "barcodes", "fitments", "sales_flow", "fulfillment", "notifications", "copilot", "finance", "warranty_intelligence", "integrations", "fleet", "security", "delivery", "partner_api", "predictive_fleet", "returns", "portal", "crm", "pricing", "analytics", "governance"],
-    "store": ["dashboard", "inventory", "stock", "barcodes", "fitments", "purchase_orders", "receiving", "mobile_warehouse", "warehouses", "reorder", "demand_planning", "rfq", "sales_flow", "fulfillment", "notifications", "copilot", "warranty_intelligence", "pwa_admin", "automation", "fleet", "security", "documents", "delivery", "predictive_fleet", "returns", "inventory_control", "supplier_performance", "governance"],
-}
-
-for _role in ROLE_MODULES:
-    if "customer_service" not in ROLE_MODULES[_role]:
-        ROLE_MODULES[_role].append("customer_service")
-    ROLE_MODULES[_role].append("saas_billing") if "saas_billing" not in ROLE_MODULES[_role] else None
-    ROLE_MODULES[_role].append("observability") if "observability" not in ROLE_MODULES[_role] else None
-    ROLE_MODULES[_role].append("inventory_network") if "inventory_network" not in ROLE_MODULES[_role] else None
 
 def parse_body(request):
     try:
@@ -58,8 +44,8 @@ def login_view(request):
     user = authenticate(request, username=email, password=password)
     if not user:
         return JsonResponse({"detail": "Invalid email or password"}, status=401)
-    role = user.profile.role
     organization = get_current_organization(user)
+    role = get_effective_role(user, organization)
     return JsonResponse({
         "token": issue_token(user),
         "user": {"id": user.id, "name": user.get_full_name() or email.split("@")[0].title(), "email": user.email or email, "role": role},
@@ -70,17 +56,17 @@ def login_view(request):
 @api_login_required
 def me_view(request):
     user = request.api_user
-    role = user.profile.role
     organization = get_current_organization(user)
+    role = get_effective_role(user, organization)
     return JsonResponse({
         "user": {"id": user.id, "name": user.get_full_name() or user.username, "email": user.email, "role": role},
         "modules": ROLE_MODULES[role],
         "organization": {"id": organization.id, "name": organization.name, "plan": organization.plan},
     })
 
-@api_login_required
+@roles_allowed("admin", "manager", "sales", "store")
 def dashboard_view(request):
-    role = request.api_user.profile.role
+    role = request.effective_role
     inventory_value = ExpressionWrapper(F("price") * F("stock_qty"), output_field=DecimalField(max_digits=16, decimal_places=2))
     total_inventory_value = Product.objects.aggregate(total=Sum(inventory_value))["total"] or 0
     data = {
@@ -98,7 +84,7 @@ def dashboard_view(request):
     return JsonResponse(data)
 
 @csrf_exempt
-@api_login_required
+@roles_allowed("admin", "manager", "sales", "store")
 def inventory_view(request):
     if request.method == "GET":
         qs = Product.objects.select_related("supplier").all().order_by("name")
@@ -110,7 +96,7 @@ def inventory_view(request):
         count=qs.count(); start=(page-1)*page_size
         return JsonResponse({"items": [product_dict(p) for p in qs[start:start+page_size]], "count": count, "page": page, "page_size": page_size, "pages": max(1,ceil(count/page_size))})
     if request.method == "POST":
-        if request.api_user.profile.role not in {"admin", "manager"}:
+        if request.effective_role not in {"admin", "manager"}:
             return JsonResponse({"detail": "Only admin or manager can add inventory"}, status=403)
         data = parse_body(request)
         if data is None:
@@ -247,7 +233,7 @@ def stock_view(request):
     return JsonResponse({"detail": "Method not allowed"}, status=405)
 
 @csrf_exempt
-@api_login_required
+@roles_allowed("admin", "manager", "sales", "store")
 def barcodes_view(request):
     if request.method == "GET":
         q = request.GET.get("q", "").strip()
@@ -270,7 +256,7 @@ def barcodes_view(request):
         return JsonResponse({"item": product_dict(product)}, status=201)
     return JsonResponse({"detail": "Method not allowed"}, status=405)
 
-@api_login_required
+@roles_allowed("admin", "manager", "sales", "store")
 def barcode_lookup_view(request):
     code = request.GET.get("code", "").strip()
     try:
@@ -280,7 +266,7 @@ def barcode_lookup_view(request):
     return JsonResponse({"item": product_dict(product)})
 
 @csrf_exempt
-@api_login_required
+@roles_allowed("admin", "manager", "sales", "store")
 def fitments_view(request):
     if request.method == "GET":
         q = request.GET.get("q", "").strip()
@@ -408,7 +394,7 @@ def receiving_view(request):
             record_audit(request,"record supplier invoice","supplier invoice",invoice.id,f"{invoice.invoice_no} ({invoice.status})")
             return JsonResponse({"item":receiving_po_dict(po),"invoice":{"id":invoice.id,"invoice_no":invoice.invoice_no,"status":invoice.status}},status=201)
         if action == "approve":
-            if request.api_user.profile.role not in {"admin","manager"}: return JsonResponse({"detail":"Only admin or manager can approve supplier invoices"},status=403)
+            if request.effective_role not in {"admin","manager"}: return JsonResponse({"detail":"Only admin or manager can approve supplier invoices"},status=403)
             invoice=SupplierInvoice.objects.get(id=int(data["invoice_id"])); invoice.status="approved"; invoice.approved_by=request.api_user; invoice.approved_at=timezone.now(); invoice.save(update_fields=["status","approved_by","approved_at"])
             record_audit(request,"approve supplier invoice","supplier invoice",invoice.id,invoice.invoice_no)
             return JsonResponse({"item":{"id":invoice.id,"invoice_no":invoice.invoice_no,"status":invoice.status}})
@@ -457,7 +443,7 @@ def mobile_warehouse_view(request):
 @roles_allowed("admin", "manager", "sales", "store")
 def notifications_view(request):
     if request.method == "GET":
-        qs=Notification.objects.filter(Q(user=request.api_user)|Q(user__isnull=True,role="")|Q(user__isnull=True,role=request.api_user.profile.role)).order_by("-created_at")[:100]
+        qs=Notification.objects.filter(Q(user=request.api_user)|Q(user__isnull=True,role="")|Q(user__isnull=True,role=request.effective_role)).order_by("-created_at")[:100]
         items=[{"id":n.id,"channel":"email","audience":n.user.get_full_name() if n.user else (n.role or "Operations team"),"event":n.title,"status":"read" if n.read else "queued","detail":n.message,"created_at":n.created_at.isoformat()} for n in qs]
         return JsonResponse({"items":items,"templates":["RFQ response reminder","Purchase order dispatched","Delivery update","Invoice exception","Quote approval","Low-stock alert"]})
     data=parse_body(request) or {}
@@ -485,7 +471,7 @@ def copilot_view(request):
     return JsonResponse({"item":item})
 
 @csrf_exempt
-@roles_allowed("admin", "manager", "sales")
+@roles_allowed("admin", "manager")
 def finance_view(request):
     def parse_filter(name):
         value=request.GET.get(name)
@@ -531,7 +517,7 @@ def finance_view(request):
         return JsonResponse({"detail": f"Could not complete finance action: {exc}"}, status=400)
 
 @csrf_exempt
-@roles_allowed("admin", "manager", "sales", "store")
+@roles_allowed("admin", "manager", "store")
 def warranty_view(request):
     def claim_item(item): return {"id":item.id,"claim_no":item.return_no,"sku":item.product.sku,"product":item.product.name,"customer":item.customer_name,"reason":item.reason,"status":item.status,"resolution":item.resolution,"supplier":item.product.supplier.name if item.product.supplier else "Unassigned","recovery_amount":float(item.refund_amount),"root_cause":item.inspection_notes or "Pending inspection","created_at":item.created_at.isoformat()}
     if request.method == "GET":
@@ -546,7 +532,7 @@ def warranty_view(request):
         return JsonResponse({"detail": f"Could not update warranty claim: {exc}"}, status=400)
 
 @csrf_exempt
-@roles_allowed("admin", "manager", "store")
+@roles_allowed("admin", "manager")
 def integrations_view(request):
     organization=request.organization
     if request.method == "GET":
@@ -587,7 +573,7 @@ def integrations_view(request):
     return JsonResponse({"item":payload},status=201)
 
 @csrf_exempt
-@roles_allowed("admin", "manager", "store")
+@roles_allowed("admin")
 def pwa_admin_view(request):
     organization=request.organization
     if request.method == "GET":
@@ -616,7 +602,7 @@ def pwa_admin_view(request):
     return JsonResponse({"item":item})
 
 @csrf_exempt
-@roles_allowed("admin", "manager", "store")
+@roles_allowed("admin", "manager")
 def tenancy_view(request):
     organization=request.organization
     if request.method == "GET":
@@ -625,19 +611,31 @@ def tenancy_view(request):
         users.extend({"id":invite.id,"name":invite.email,"email":invite.email,"role":invite.role,"branch":invite.branch.code if invite.branch else "All branches","approval_limit":float(invite.approval_limit),"status":"invited"} for invite in organization.invitations.select_related("branch").filter(status="pending").order_by("-created_at"))
         return JsonResponse({"organization":{"id":organization.id,"name":organization.name,"plan":organization.plan.title(),"branches":len(branches),"users":len(users),"monthly_events":AuditLog.objects.filter(user__organization_memberships__organization=organization).count()},"branches":branches,"users":users})
     data=parse_body(request) or {}; action=str(data.get("action","invite"))
-    if action=="branch":
+    if action=="role":
+        if request.effective_role != "admin": return JsonResponse({"detail":"Only an admin can change organization roles"},status=403)
+        try:
+            membership=OrganizationMembership.objects.select_related("user").get(organization=organization,user_id=int(data["user_id"]),active=True)
+            role=str(data.get("role", "")).strip()
+            valid_roles={choice[0] for choice in OrganizationMembership.ROLE_CHOICES}
+            if role not in valid_roles: raise ValueError("Invalid organization role")
+            membership.role=role; membership.approval_limit=float(data.get("approval_limit", membership.approval_limit) or 0); membership.save(update_fields=["role","approval_limit"])
+            item={"id":membership.user_id,"name":membership.user.get_full_name() or membership.user.username,"email":membership.user.email,"role":membership.role,"branch":"All branches","approval_limit":float(membership.approval_limit),"status":"active"}
+        except Exception as exc: return JsonResponse({"detail":f"Could not update role: {exc}"},status=400)
+    elif action=="branch":
         try: branch=Warehouse.objects.create(code=str(data["code"]).strip().upper(),name=str(data["name"]).strip(),address=str(data.get("address","")),organization=organization); item={"id":branch.id,"code":branch.code,"name":branch.name,"users":0,"status":"active"}
         except Exception as exc: return JsonResponse({"detail":f"Could not create branch: {exc}"},status=400)
     else:
         try:
             branch=Warehouse.objects.filter(organization=organization).filter(code=str(data.get("branch","")).strip().upper()).first() if data.get("branch") else None
-            invite=OrganizationInvitation.objects.create(organization=organization,email=str(data["email"]).strip().lower(),role=str(data.get("role","store")),branch=branch,approval_limit=float(data.get("approval_limit",0) or 0),token=f"invite_{uuid4().hex}",invited_by=request.api_user)
+            role=str(data.get("role","store")).strip(); valid_roles={choice[0] for choice in OrganizationMembership.ROLE_CHOICES}
+            if role not in valid_roles: raise ValueError("Invalid organization role")
+            invite=OrganizationInvitation.objects.create(organization=organization,email=str(data["email"]).strip().lower(),role=role,branch=branch,approval_limit=float(data.get("approval_limit",0) or 0),token=f"invite_{uuid4().hex}",invited_by=request.api_user)
             item={"id":invite.id,"name":invite.email,"email":invite.email,"role":invite.role,"branch":branch.code if branch else "All branches","approval_limit":float(invite.approval_limit),"status":invite.status}
         except Exception as exc: return JsonResponse({"detail":f"Could not invite user: {exc}"},status=400)
-    record_audit(request,"tenant administration","organization",item["id"],action); return JsonResponse({"item":item},status=201)
+    record_audit(request,"tenant administration","organization",item["id"],action); return JsonResponse({"item":item},status=200 if action=="role" else 201)
 
 @csrf_exempt
-@roles_allowed("admin", "manager", "store")
+@roles_allowed("admin", "manager")
 def automation_view(request):
     organization=request.organization
     if request.method == "GET":
@@ -664,7 +662,7 @@ def automation_view(request):
     return JsonResponse({"item":item},status=201 if action=="rule" else 200)
 
 @csrf_exempt
-@roles_allowed("admin", "manager", "sales", "store")
+@roles_allowed("admin", "manager")
 def fleet_view(request):
     organization=request.organization
     def vehicle_item(vehicle):
@@ -699,21 +697,21 @@ def fleet_view(request):
     return JsonResponse({"item":item},status=201 if action in {"vehicle","work_order"} else 200)
 
 @csrf_exempt
-@roles_allowed("admin", "manager", "store")
+@roles_allowed("admin", "manager")
 def inventory_network_view(request):
     branches=[{"id":1,"code":"DEL-MAIN","name":"Delhi Main Warehouse","service_level":96,"capacity":78,"stock_value":682000,"demand_index":112},{"id":2,"code":"GUR-SAT","name":"Gurugram Satellite Store","service_level":91,"capacity":71,"stock_value":248000,"demand_index":128},{"id":3,"code":"NOI-NTH","name":"Noida North Store","service_level":88,"capacity":89,"stock_value":198000,"demand_index":74}]
     if request.method == "GET": return JsonResponse({"summary":{"network_units":1128,"imbalance_value":284000,"overstock_skus":7,"service_level":93.6},"branches":branches,"recommendations":[{"id":1,"sku":"RLY-24V4","product":"24V 4-Pin Automotive Relay","from":"DEL-MAIN","to":"GUR-SAT","quantity":18,"reason":"Gurugram demand exceeds available stock","value":3240,"status":"recommended"},{"id":2,"sku":"BLT-0812","product":"Hex Bolt M8 x 20 mm","from":"NOI-NTH","to":"DEL-MAIN","quantity":120,"reason":"Noida overstock above 90-day cover","value":1440,"status":"recommended"},{"id":3,"sku":"BRG-6204","product":"Deep Groove Bearing 6204","from":"DEL-MAIN","to":"NOI-NTH","quantity":10,"reason":"Protect Noida service-level target","value":3100,"status":"approved"}],"stock_risks":[{"id":1,"sku":"RLY-24V4","product":"24V 4-Pin Automotive Relay","branch":"GUR-SAT","on_hand":0,"target":16,"cover_days":0,"risk":"stockout"},{"id":2,"sku":"BLT-0812","product":"Hex Bolt M8 x 20 mm","branch":"NOI-NTH","on_hand":640,"target":120,"cover_days":142,"risk":"overstock"},{"id":3,"sku":"BRG-6204","product":"Deep Groove Bearing 6204","branch":"NOI-NTH","on_hand":5,"target":18,"cover_days":4,"risk":"low_cover"}]})
     data=parse_body(request) or {}; item={"id":data.get("id"),"status":"approved" if data.get("action")=="approve" else "dismissed"}; record_audit(request,"inventory network recommendation","transfer",item["id"],data.get("action","approve")); return JsonResponse({"item":item})
 
 @csrf_exempt
-@roles_allowed("admin", "manager", "store")
+@roles_allowed("admin")
 def observability_view(request):
     services=[{"id":1,"name":"Core API","type":"api","status":"healthy","uptime":99.99,"latency":142,"requests":8420},{"id":2,"name":"Integration workers","type":"worker","status":"degraded","uptime":99.72,"latency":480,"requests":1260},{"id":3,"name":"Database","type":"database","status":"healthy","uptime":100,"latency":18,"requests":0},{"id":4,"name":"Backup storage","type":"backup","status":"healthy","uptime":99.9,"latency":0,"requests":3}]
     if request.method == "GET": return JsonResponse({"summary":{"uptime":99.96,"api_latency_ms":184,"failed_jobs":2,"open_incidents":1},"services":services,"jobs":[{"id":1,"name":"Supplier webhook delivery","queue":"integrations","status":"failed","last_run":timezone.now().isoformat(),"retries":3,"detail":"Shiprocket webhook returned 503"},{"id":2,"name":"Daily finance export","queue":"reports","status":"completed","last_run":(timezone.now()-timedelta(hours=1)).isoformat(),"retries":0,"detail":"CSV export delivered"},{"id":3,"name":"PWA sync reconciliation","queue":"mobile","status":"retrying","last_run":timezone.now().isoformat(),"retries":1,"detail":"One device conflict awaiting review"}],"incidents":[{"id":1,"incident_no":"INC-260923-03","title":"Shipping webhook degradation","severity":"medium","status":"investigating","owner":"Platform team","started_at":timezone.now().isoformat(),"updates":3}],"errors":[{"id":1,"route":"/api/integrations/","code":"503","count":8,"last_seen":timezone.now().isoformat()},{"id":2,"route":"/api/pwa-admin/","code":"409","count":1,"last_seen":timezone.now().isoformat()}]})
     data=parse_body(request) or {}; action=str(data.get("action","retry")); item={"id":data.get("id"),"status":"completed" if action=="retry" else "resolved"}; record_audit(request,"observability action","platform",item["id"],action); return JsonResponse({"item":item})
 
 @csrf_exempt
-@roles_allowed("admin", "manager", "store")
+@roles_allowed("admin")
 def saas_billing_view(request):
     plans=[{"id":"starter","name":"Starter","price":4999,"users":5,"branches":1,"api_calls":10000},{"id":"growth","name":"Growth","price":14999,"users":25,"branches":5,"api_calls":100000},{"id":"scale","name":"Scale","price":39999,"users":100,"branches":20,"api_calls":1000000}]
     tenants=[{"id":1,"organization":"Partora Auto Parts India","plan":"Growth","status":"active","renewal":"2026-10-01","seats_used":12,"seats_limit":25,"usage":68,"mrr":14999},{"id":2,"organization":"Northline Repairs","plan":"Starter","status":"trial","renewal":"2026-09-30","seats_used":3,"seats_limit":5,"usage":42,"mrr":0},{"id":3,"organization":"Rapid Fleet Care","plan":"Scale","status":"past_due","renewal":"2026-09-25","seats_used":64,"seats_limit":100,"usage":84,"mrr":39999}]
@@ -725,7 +723,7 @@ def saas_billing_view(request):
     record_audit(request,"subscription billing action","tenant",item["id"],action); return JsonResponse({"item":item},status=201 if action=="invoice" else 200)
 
 @csrf_exempt
-@roles_allowed("admin", "manager", "store")
+@roles_allowed("admin", "manager", "sales")
 def customer_service_view(request):
     organization=request.organization
     def ticket_item(ticket):
@@ -756,7 +754,7 @@ def customer_service_view(request):
     return JsonResponse({"item":item},status=201 if action=="ticket" else 200)
 
 @csrf_exempt
-@roles_allowed("admin", "manager", "store")
+@roles_allowed("admin")
 def security_view(request):
     users=[{"id":1,"name":"Aarav Admin","role":"admin","mfa":"enabled","last_login":timezone.now().isoformat(),"risk":"low"},{"id":2,"name":"Meera Manager","role":"manager","mfa":"pending","last_login":(timezone.now()-timedelta(minutes=20)).isoformat(),"risk":"medium"},{"id":3,"name":"Rohan Sales","role":"sales","mfa":"enabled","last_login":(timezone.now()-timedelta(hours=1)).isoformat(),"risk":"low"}]
     sessions=[{"id":1,"user":"Aarav Admin","device":"Chrome - Windows","location":"New Delhi","last_seen":timezone.now().isoformat(),"status":"active"},{"id":2,"user":"Kabir Store","device":"Android PWA","location":"Gurugram","last_seen":(timezone.now()-timedelta(minutes=6)).isoformat(),"status":"active"}]
@@ -771,7 +769,7 @@ def security_view(request):
     record_audit(request,"security action","security",item.get("id") or "export",action); return JsonResponse({"item":item})
 
 @csrf_exempt
-@roles_allowed("admin", "manager", "store")
+@roles_allowed("admin")
 def documents_view(request):
     documents=[{"id":1,"file_name":"VE-INV-8821.pdf","supplier":"VoltEdge Electricals","invoice_no":"VE-INV-8821","gstin":"07AAACV1234A1Z5","total":22050,"po_no":"PO-260920-90BD","match_status":"exception","confidence":94,"status":"needs_review","uploaded_at":timezone.now().isoformat(),"issue":"Invoice quantity includes damaged units"},{"id":2,"file_name":"TL-INV-4407.pdf","supplier":"TorqueLine Components","invoice_no":"TL-INV-4407","gstin":"07AABCT6789C1Z2","total":14700,"po_no":"PO-260921-A12F","match_status":"matched","confidence":98,"status":"approved","uploaded_at":(timezone.now()-timedelta(hours=1)).isoformat(),"issue":""}]
     if request.method == "GET": return JsonResponse({"summary":{"processed_today":18,"pending_review":1,"matched":14,"exception_rate":11},"documents":documents})
@@ -780,7 +778,7 @@ def documents_view(request):
     record_audit(request,"document processing","supplier_invoice",item["id"],action); return JsonResponse({"item":item},status=201 if action=="upload" else 200)
 
 @csrf_exempt
-@roles_allowed("admin", "manager", "sales", "store")
+@roles_allowed("admin", "manager")
 def delivery_view(request):
     organization=request.organization
     def route_item(route):
@@ -807,7 +805,7 @@ def delivery_view(request):
     return JsonResponse({"item":item},status=201 if action=="route" else 200)
 
 @csrf_exempt
-@roles_allowed("admin", "manager", "sales")
+@roles_allowed("admin")
 def partner_api_view(request):
     if request.method == "GET": return JsonResponse({"summary":{"active_keys":3,"calls_today":1284,"error_rate":1.8,"webhooks":6},"partners":[{"id":1,"name":"Northline Repairs","type":"dealer","status":"connected","last_call":timezone.now().isoformat(),"calls":642},{"id":2,"name":"Zoho Books","type":"accounting","status":"connected","last_call":timezone.now().isoformat(),"calls":418},{"id":3,"name":"FleetCare Telematics","type":"fleet","status":"sandbox","last_call":(timezone.now()-timedelta(hours=1)).isoformat(),"calls":224}],"keys":[{"id":1,"label":"Northline production","prefix":"pk_live_north_****","scopes":"orders:read, quotes:write","last_used":timezone.now().isoformat(),"status":"active"},{"id":2,"label":"FleetCare sandbox","prefix":"pk_test_fleet_****","scopes":"vehicles:read","last_used":(timezone.now()-timedelta(hours=1)).isoformat(),"status":"active"}],"webhooks":[{"id":1,"event":"order.fulfilled","target":"https://northline.example/hooks/partora","status":"active","deliveries":182},{"id":2,"event":"invoice.exception","target":"https://zoho.example/hooks/partora","status":"retrying","deliveries":14}]})
     data=parse_body(request) or {}; action=str(data.get("action","key")); item={"id":uuid4().hex[:8],"label":str(data.get("label","New API key")),"prefix":f"pk_{data.get('environment','test')}_{uuid4().hex[:6]}_****","scopes":str(data.get("scopes","orders:read")),"last_used":None,"status":"active"}
@@ -816,7 +814,7 @@ def partner_api_view(request):
     record_audit(request,"partner API action","api",item["id"],action); return JsonResponse({"item":item},status=201 if action in {"key","webhook"} else 200)
 
 @csrf_exempt
-@roles_allowed("admin", "manager", "sales", "store")
+@roles_allowed("admin", "manager")
 def predictive_fleet_view(request):
     vehicles=[{"id":1,"registration":"DL 01 AB 2488","customer":"Rapid Fleet Care","model":"Tata Ace Gold","mileage":68240,"risk":"high","prediction":"Brake pad wear likely within 420 km","confidence":89,"next_service":"2026-10-04","estimated_cost":6800},{"id":2,"registration":"HR 26 CX 9012","customer":"Northline Repairs","model":"Hyundai i20","mileage":42110,"risk":"medium","prediction":"Battery replacement likely within 30 days","confidence":76,"next_service":"2026-11-18","estimated_cost":5200},{"id":3,"registration":"DL 04 MK 7761","customer":"Metro Garage","model":"Maruti Swift","mileage":88700,"risk":"low","prediction":"No immediate component risk","confidence":82,"next_service":"2026-09-28","estimated_cost":3100}]
     if request.method == "GET": return JsonResponse({"summary":{"vehicles":42,"high_risk":3,"due_30_days":8,"projected_savings":184000},"vehicles":vehicles,"history":[{"id":1,"registration":"DL 01 AB 2488","component":"Brake pads","event":"Predicted replacement","status":"planned","due":"420 km","owner":"Ravi Kumar"},{"id":2,"registration":"HR 26 CX 9012","component":"Battery","event":"Inspection reminder","status":"queued","due":"30 days","owner":"Sana Iqbal"}]})
@@ -968,6 +966,7 @@ def fulfillment_view(request):
                 order.fulfillment_status=status; order.status="fulfilled" if status in {"dispatched","delivered"} else ("cancelled" if status=="cancelled" else order.status); order.save(update_fields=["fulfillment_status","status","dispatched_at","delivered_at"])
                 record_audit(request,"fulfillment status","sales order",order.id,f"{order.order_no} → {status}")
             elif action == "payment":
+                if request.effective_role not in {"admin", "manager"}: raise PermissionError("Only admin or manager can record payments")
                 invoice=getattr(order,"invoice",None)
                 if not invoice: raise ValueError("Issue the invoice before recording a payment")
                 amount=float(data.get("amount",0) or 0)
@@ -983,7 +982,7 @@ def fulfillment_view(request):
     return JsonResponse({"item":sales_order_dict(order),"invoice":invoice_dict(getattr(order,"invoice",None)) if getattr(order,"invoice",None) else None})
 
 @csrf_exempt
-@roles_allowed("admin", "manager", "sales", "store")
+@roles_allowed("admin", "manager", "store")
 def returns_view(request):
     if request.method == "GET":
         qs=ReturnRequest.objects.select_related("product","sales_order","created_by").order_by("-created_at")[:200]
@@ -1032,7 +1031,7 @@ def inventory_control_view(request):
             item={"id":count.id,"reference":count.reference,"warehouse":warehouse.code if warehouse else None,"status":count.status,"notes":count.notes,"counted_by":request.api_user.get_full_name() or request.api_user.username,"created_at":count.created_at.isoformat(),"lines":[{"sku":product.sku,"product":product.name,"expected_qty":expected,"counted_qty":counted,"variance":counted-expected}]}
             record_audit(request,"submit count","inventory count",count.id,count.reference)
         elif action == "approve":
-            if request.api_user.profile.role not in {"admin","manager"}: raise ValueError("Only admin or manager can approve counts")
+            if request.effective_role not in {"admin","manager"}: raise ValueError("Only admin or manager can approve counts")
             count=InventoryCount.objects.prefetch_related("lines__product").get(id=int(data["id"]))
             if count.status == "approved": raise ValueError("Count is already approved")
             for line in count.lines.all():
@@ -1052,7 +1051,7 @@ def inventory_control_view(request):
     return JsonResponse({"item":item})
 
 @csrf_exempt
-@roles_allowed("admin", "manager", "store")
+@roles_allowed("admin", "manager")
 def supplier_performance_view(request):
     if request.method == "GET":
         suppliers=[]
@@ -1221,7 +1220,7 @@ def demand_planning_view(request):
         record_audit(request, "request purchase plan", "purchase plan", plan.id, f"{product.sku} / {quantity} units")
         return JsonResponse({"item": _purchase_plan_item(plan)}, status=201)
     if action in {"approve", "reject"}:
-        if request.api_user.profile.role not in {"admin", "manager"}:
+        if request.effective_role not in {"admin", "manager"}:
             return JsonResponse({"detail": "Only admin or manager can review purchase plans"}, status=403)
         try:
             plan = PurchasePlan.objects.select_related("product", "supplier", "purchase_order").get(id=int(data["id"]))
@@ -1356,7 +1355,7 @@ def rfq_view(request):
         record_audit(request, "record supplier quote", "rfq offer", offer.id, f"{offer.rfq.rfq_no} / {offer.supplier.name}")
         return JsonResponse({"item": _rfq_detail(offer.rfq)})
     if action == "select":
-        if request.api_user.profile.role not in {"admin", "manager"}:
+        if request.effective_role not in {"admin", "manager"}:
             return JsonResponse({"detail": "Only admin or manager can select an offer and create a PO"}, status=403)
         try:
             offer = RFQOffer.objects.select_related("rfq__product", "rfq__purchase_plan", "supplier").get(id=int(data["offer_id"]))
@@ -1476,6 +1475,8 @@ def pricing_view(request):
         return JsonResponse({"items":rules})
     if request.method == "POST":
         data=parse_body(request) or {}; action=str(data.get("action","rule"))
+        if action != "preview" and request.effective_role not in {"admin", "manager"}:
+            return JsonResponse({"detail":"Only admin or manager can change pricing rules"},status=403)
         if action == "preview":
             try:
                 product=Product.objects.get(sku=str(data["sku"]).strip().upper()); customer_type=str(data.get("customer_type","retail")); qty=max(1,int(data.get("quantity",1)))
@@ -1517,9 +1518,9 @@ def analytics_view(request):
     return JsonResponse({"metrics":{"sales_total":sales_total,"invoice_total":invoice_total,"inventory_value":inventory_value,"inventory_cost":inventory_cost,"estimated_inventory_margin":max(0,inventory_value-inventory_cost),"outstanding":outstanding,"quote_conversion":round((approved/quotes_total*100),1) if quotes_total else 0,"low_stock":low_stock},"operations":{"open_purchase_orders":open_purchase_orders,"open_rfqs":open_rfqs,"receiving_exceptions":invoice_exceptions,"warehouse_units":WarehouseStock.objects.aggregate(total=Sum("quantity"))["total"] or 0,"at_risk_suppliers":0},"alerts":alerts,"categories":categories,"suppliers":suppliers,"top_customers":top_customers})
 
 @csrf_exempt
-@api_login_required
+@roles_allowed("admin", "manager", "sales")
 def governance_view(request):
-    role=request.api_user.profile.role
+    role=request.effective_role
     if request.method == "GET":
         notifications=Notification.objects.filter(Q(user=request.api_user)|Q(user__isnull=True,role=role)).order_by("-created_at")[:50]
         approvals=ApprovalRequest.objects.select_related("requested_by","reviewed_by").order_by("-created_at")[:100]

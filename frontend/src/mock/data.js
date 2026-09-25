@@ -6,17 +6,13 @@ export const demoAccounts = [
 ]
 
 export const modulesByRole = {
-  admin: ['dashboard', 'inventory', 'quotations', 'suppliers', 'stock', 'barcodes', 'fitments', 'purchase_orders', 'receiving', 'mobile_warehouse', 'warehouses', 'reorder', 'demand_planning', 'rfq', 'sales_flow', 'fulfillment', 'notifications', 'copilot', 'finance', 'warranty_intelligence', 'integrations', 'pwa_admin', 'tenancy', 'automation', 'fleet', 'security', 'documents', 'delivery', 'partner_api', 'predictive_fleet', 'customer_service', 'crm', 'pricing', 'analytics', 'governance'],
-  manager: ['dashboard', 'inventory', 'quotations', 'suppliers', 'stock', 'barcodes', 'fitments', 'purchase_orders', 'receiving', 'mobile_warehouse', 'warehouses', 'reorder', 'demand_planning', 'rfq', 'sales_flow', 'fulfillment', 'notifications', 'copilot', 'finance', 'warranty_intelligence', 'integrations', 'pwa_admin', 'tenancy', 'automation', 'fleet', 'security', 'documents', 'delivery', 'partner_api', 'predictive_fleet', 'customer_service', 'crm', 'pricing', 'analytics', 'governance'],
-  sales: ['dashboard', 'inventory', 'quotations', 'barcodes', 'fitments', 'sales_flow', 'fulfillment', 'notifications', 'copilot', 'finance', 'warranty_intelligence', 'integrations', 'fleet', 'security', 'delivery', 'partner_api', 'predictive_fleet', 'customer_service', 'crm', 'pricing', 'analytics', 'governance'],
-  store: ['dashboard', 'inventory', 'stock', 'barcodes', 'fitments', 'purchase_orders', 'receiving', 'mobile_warehouse', 'warehouses', 'reorder', 'demand_planning', 'rfq', 'fulfillment', 'notifications', 'copilot', 'warranty_intelligence', 'pwa_admin', 'automation', 'fleet', 'security', 'documents', 'delivery', 'predictive_fleet', 'customer_service', 'governance'],
+  admin: ['dashboard', 'inventory', 'quotations', 'suppliers', 'stock', 'barcodes', 'fitments', 'purchase_orders', 'receiving', 'mobile_warehouse', 'warehouses', 'reorder', 'demand_planning', 'rfq', 'sales_flow', 'fulfillment', 'notifications', 'copilot', 'finance', 'warranty_intelligence', 'integrations', 'pwa_admin', 'tenancy', 'automation', 'fleet', 'security', 'documents', 'delivery', 'partner_api', 'predictive_fleet', 'customer_service', 'saas_billing', 'observability', 'inventory_network', 'returns', 'inventory_control', 'supplier_performance', 'portal', 'crm', 'pricing', 'analytics', 'governance'],
+  manager: ['dashboard', 'inventory', 'quotations', 'suppliers', 'stock', 'barcodes', 'fitments', 'purchase_orders', 'receiving', 'mobile_warehouse', 'warehouses', 'reorder', 'demand_planning', 'rfq', 'sales_flow', 'fulfillment', 'notifications', 'copilot', 'finance', 'warranty_intelligence', 'integrations', 'tenancy', 'automation', 'fleet', 'delivery', 'customer_service', 'inventory_network', 'returns', 'inventory_control', 'supplier_performance', 'portal', 'crm', 'pricing', 'analytics', 'governance'],
+  sales: ['dashboard', 'inventory', 'quotations', 'barcodes', 'fitments', 'sales_flow', 'fulfillment', 'notifications', 'copilot', 'customer_service', 'portal', 'crm', 'pricing', 'analytics'],
+  store: ['dashboard', 'inventory', 'stock', 'barcodes', 'fitments', 'purchase_orders', 'receiving', 'mobile_warehouse', 'warehouses', 'reorder', 'fulfillment', 'notifications', 'returns', 'inventory_control'],
+  client: ['client_portal'],
 }
 
-Object.keys(modulesByRole).forEach(role => {
-  if (!modulesByRole[role].includes('saas_billing')) modulesByRole[role].push('saas_billing')
-  if (!modulesByRole[role].includes('observability')) modulesByRole[role].push('observability')
-  if (!modulesByRole[role].includes('inventory_network')) modulesByRole[role].push('inventory_network')
-})
 
 export const inventory = [
   { id: 1, sku: 'BRK-1048', name: 'Ceramic Brake Pad Set', brand: 'RoadShield', category: 'auto', supplier: 'TorqueLine Components', price: 2450, cost_price: 1519, wholesale_price: 2156, dealer_price: 2009, stock_qty: 38, reorder_level: 12, reorder_qty: 30, stock_status: 'healthy', bin_location: 'A-04-12', barcode: '890100010481' },
