@@ -441,10 +441,16 @@ class ApprovalRequest(models.Model):
 
 class AuditLog(models.Model):
     user = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name="partora_audit_logs")
+    organization = models.ForeignKey("Organization", on_delete=models.CASCADE, null=True, blank=True, related_name="audit_logs")
+    branch = models.ForeignKey(Warehouse, on_delete=models.SET_NULL, null=True, blank=True, related_name="audit_logs")
     action = models.CharField(max_length=80)
     entity = models.CharField(max_length=80)
     entity_id = models.CharField(max_length=80, blank=True)
     detail = models.CharField(max_length=300, blank=True)
+    result = models.CharField(max_length=20, default="success")
+    ip_address = models.GenericIPAddressField(null=True, blank=True)
+    user_agent = models.CharField(max_length=300, blank=True)
+    metadata = models.JSONField(default=dict, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
 

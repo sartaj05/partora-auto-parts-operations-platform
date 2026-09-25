@@ -33,6 +33,7 @@ urlpatterns = [
     path("automation/", views.automation_view),
     path("fleet/", views.fleet_view),
     path("security/", views.security_view),
+    path("activity/", views.activity_view),
     path("documents/", views.documents_view),
     path("delivery/", views.delivery_view),
     path("partner-api/", views.partner_api_view),

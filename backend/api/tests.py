@@ -5,7 +5,7 @@ from django.test import TestCase
 from django.utils import timezone
 
 from .auth import issue_token
-from .models import ApprovalRequest, AutomationRule, Customer, CustomerPortalToken, DemandHistory, FinanceTaxRule, FleetVehicle, GoodsReceipt, IntegrationConnection, Invoice, MobileTask, Organization, OrganizationInvitation, OrganizationMembership, Payment, PermissionDefinition, PortalAccessLog, Product, Profile, PurchaseOrder, PurchaseOrderStatusEvent, PurchasePlan, PwaDevice, QuotationItem, Quotation, RFQ, RFQOffer, RolePermission, SalesOrder, SalesOrderItem, StockLedgerEntry, StockReservation, SupportTicket, Supplier, SupplierContract, SupplierInvoice, SyncConflict, VehicleFitment, Warehouse, WebhookDelivery, WebhookSubscription
+from .models import ApprovalRequest, AuditLog, AutomationRule, Customer, CustomerPortalToken, DemandHistory, FinanceTaxRule, FleetVehicle, GoodsReceipt, IntegrationConnection, Invoice, MobileTask, Organization, OrganizationInvitation, OrganizationMembership, Payment, PermissionDefinition, PortalAccessLog, Product, Profile, PurchaseOrder, PurchaseOrderStatusEvent, PurchasePlan, PwaDevice, QuotationItem, Quotation, RFQ, RFQOffer, RolePermission, SalesOrder, SalesOrderItem, StockLedgerEntry, StockReservation, SupportTicket, Supplier, SupplierContract, SupplierInvoice, SyncConflict, VehicleFitment, Warehouse, WebhookDelivery, WebhookSubscription
 
 
 class DemandPlanningApiTests(TestCase):
@@ -551,3 +551,12 @@ class DemandPlanningApiTests(TestCase):
         self.assertEqual(response.status_code, 202)
         self.assertTrue(response.json()["approval_required"])
         self.assertTrue(ApprovalRequest.objects.filter(kind="stock", reference="COUNT-APPROVAL", status="pending").exists())
+
+    def test_activity_api_returns_organization_scoped_audit_context(self):
+        self.client.get("/api/warehouses/", **self.auth_headers(self.manager))
+        organization = self.manager.organization_memberships.first().organization
+        AuditLog.objects.create(user=self.manager, organization=organization, action="test activity", entity="test", entity_id="42", detail="activity context", ip_address="127.0.0.1", user_agent="pytest")
+        response = self.client.get("/api/activity/?action=test", **self.auth_headers(self.manager))
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["events"][0]["ip_address"], "127.0.0.1")
+        self.assertEqual(response.json()["events"][0]["branch"], "All branches")

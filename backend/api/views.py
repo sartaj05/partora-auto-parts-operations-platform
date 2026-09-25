@@ -25,7 +25,7 @@ def parse_body(request):
 
 def record_audit(request, action, entity, entity_id="", detail=""):
     try:
-        AuditLog.objects.create(user=getattr(request, "api_user", None), action=action, entity=entity, entity_id=str(entity_id or ""), detail=str(detail or "")[:300])
+        AuditLog.objects.create(user=getattr(request, "api_user", None), organization=getattr(request, "organization", None), branch=getattr(request, "branch", None), action=action, entity=entity, entity_id=str(entity_id or ""), detail=str(detail or "")[:300], ip_address=request.META.get("REMOTE_ADDR"), user_agent=request.META.get("HTTP_USER_AGENT", "")[:300], metadata={"method": request.method, "path": request.path})
     except Exception:
         pass
 
@@ -815,6 +815,19 @@ def security_view(request):
     if action == "resolve": item={"id":data.get("id"),"status":"resolved"}
     if action == "export": item={"format":"csv","filename":f"partora-security-{timezone.localdate().isoformat()}.csv","rows":AuditLog.objects.count()}
     record_audit(request,"security action","security",item.get("id") or "export",action); return JsonResponse({"item":item})
+
+
+@roles_allowed("admin", "manager")
+def activity_view(request):
+    query=AuditLog.objects.select_related("user","branch").filter(organization=request.organization)
+    actor=request.GET.get("actor", "").strip()
+    action=request.GET.get("action", "").strip()
+    entity=request.GET.get("entity", "").strip()
+    if actor: query=query.filter(Q(user__username__icontains=actor)|Q(user__email__icontains=actor)|Q(user__first_name__icontains=actor)|Q(user__last_name__icontains=actor))
+    if action: query=query.filter(action__icontains=action)
+    if entity: query=query.filter(entity__icontains=entity)
+    events=list(query.order_by("-created_at")[:200])
+    return JsonResponse({"count":len(events),"events":[{"id":event.id,"actor":event.user.get_full_name() if event.user else "System","action":event.action,"entity":event.entity,"entity_id":event.entity_id,"detail":event.detail,"result":event.result,"branch":event.branch.code if event.branch else "All branches","ip_address":event.ip_address,"user_agent":event.user_agent,"metadata":event.metadata,"created_at":event.created_at.isoformat()} for event in events]})
 
 @csrf_exempt
 @roles_allowed("admin")
