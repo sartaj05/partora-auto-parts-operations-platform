@@ -8,13 +8,14 @@ from decimal import Decimal
 from math import ceil
 from uuid import uuid4
 from django.contrib.auth import authenticate
+from django.contrib.auth.hashers import check_password, make_password
 from django.db import transaction
 from django.db.models import Count, DecimalField, ExpressionWrapper, F, Max, Q, Sum
 from django.http import JsonResponse
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 from .auth import ROLE_MODULES, api_login_required, get_current_organization, get_effective_role, get_permission_map, has_permission, issue_token, roles_allowed
-from .models import Product, Quotation, QuotationItem, StockMovement, Supplier, SupplierContract, VehicleFitment, PurchaseOrder, PurchaseOrderItem, PurchaseOrderStatusEvent, GoodsReceipt, GoodsReceiptLine, SupplierInvoice, Warehouse, WarehouseStock, StockTransfer, SalesOrder, SalesOrderItem, Invoice, Payment, FinanceTaxRule, ReturnRequest, InventoryCount, InventoryCountLine, ProductLot, SupplierPriceSnapshot, Customer, CustomerPortalToken, PortalAccessLog, PriceRule, Notification, ApprovalRequest, AuditLog, DemandHistory, PurchasePlan, RFQ, RFQOffer, IntegrationConnection, WebhookSubscription, IntegrationLog, WebhookDelivery, PwaDevice, SyncConflict, MobileTask, AutomationRule, AutomationRun, FleetVehicle, FleetWorkOrder, SupportTicket, SupportCommunication, DeliveryRoute, Shipment, Organization, OrganizationMembership, OrganizationInvitation, StockLedgerEntry, StockReservation, PermissionDefinition, RolePermission, Profile, UserSecurityProfile, UserSession
+from .models import Product, Quotation, QuotationItem, StockMovement, Supplier, SupplierContract, VehicleFitment, PurchaseOrder, PurchaseOrderItem, PurchaseOrderStatusEvent, GoodsReceipt, GoodsReceiptLine, SupplierInvoice, Warehouse, WarehouseStock, StockTransfer, SalesOrder, SalesOrderItem, Invoice, Payment, FinanceTaxRule, ReturnRequest, InventoryCount, InventoryCountLine, ProductLot, SupplierPriceSnapshot, Customer, CustomerPortalToken, CustomerPortalAccount, PortalAccessLog, PriceRule, Notification, ApprovalRequest, AuditLog, DemandHistory, PurchasePlan, RFQ, RFQOffer, IntegrationConnection, WebhookSubscription, IntegrationLog, WebhookDelivery, PwaDevice, SyncConflict, MobileTask, AutomationRule, AutomationRun, FleetVehicle, FleetWorkOrder, SupportTicket, SupportCommunication, DeliveryRoute, Shipment, Organization, OrganizationMembership, OrganizationInvitation, StockLedgerEntry, StockReservation, PermissionDefinition, RolePermission, Profile, UserSecurityProfile, UserSession
 from .serializers import product_dict, quotation_dict, supplier_dict
 
 def parse_body(request):
@@ -1568,6 +1569,42 @@ def portal_issue_view(request):
         return JsonResponse({"detail":f"Could not issue portal link: {exc}"},status=400)
     record_audit(request,"issue portal link","customer",customer.id,customer.company or customer.name)
     return JsonResponse({"item":{"token":token.token,"customer":customer.company or customer.name,"expires_at":token.expires_at.isoformat(),"portal_path":f"/portal/{token.token}"},"portal":portal_payload(customer,token.token)},status=201)
+
+
+@csrf_exempt
+@roles_allowed("admin", "manager", "sales")
+def portal_accounts_view(request):
+    if request.method == "GET":
+        accounts=CustomerPortalAccount.objects.select_related("customer").order_by("customer__company","customer__name")
+        return JsonResponse({"accounts":[{"id":account.id,"customer_id":account.customer_id,"customer":account.customer.company or account.customer.name,"email":account.email,"active":account.active,"last_login":account.last_login.isoformat() if account.last_login else None} for account in accounts]})
+    data=parse_body(request) or {}; action=str(data.get("action", "create"))
+    if action == "create":
+        try:
+            customer=Customer.objects.get(id=int(data["customer_id"])); email=str(data.get("email") or customer.email).strip().lower(); password=str(data.get("password") or "")
+            if not email or len(password) < 8: raise ValueError("Customer email and a password of at least 8 characters are required")
+            account,_=CustomerPortalAccount.objects.update_or_create(customer=customer,defaults={"email":email,"password_hash":make_password(password),"active":True,"created_by":request.api_user})
+        except Exception as exc:
+            return JsonResponse({"detail":f"Could not create portal account: {exc}"},status=400)
+        record_audit(request,"create portal account","customer",customer.id,email)
+        return JsonResponse({"item":{"id":account.id,"customer_id":customer.id,"customer":customer.company or customer.name,"email":account.email,"active":account.active,"last_login":None}},status=201)
+    if action == "disable":
+        account=CustomerPortalAccount.objects.filter(id=int(data["id"])).first()
+        if not account: return JsonResponse({"detail":"Portal account not found"},status=404)
+        account.active=False; account.save(update_fields=["active"]); CustomerPortalToken.objects.filter(customer=account.customer,active=True).update(active=False)
+        record_audit(request,"disable portal account","customer",account.customer_id,account.email)
+        return JsonResponse({"item":{"id":account.id,"active":False}})
+    return JsonResponse({"detail":"Unknown portal account action"},status=400)
+
+
+@csrf_exempt
+def portal_account_login_view(request):
+    if request.method != "POST": return JsonResponse({"detail":"POST required"},status=405)
+    data=parse_body(request) or {}; email=str(data.get("email", "")).strip().lower(); password=str(data.get("password", ""))
+    account=CustomerPortalAccount.objects.select_related("customer").filter(email=email,active=True).first()
+    if not account or not check_password(password, account.password_hash): return JsonResponse({"detail":"Invalid customer email or password"},status=401)
+    account.last_login=timezone.now(); account.save(update_fields=["last_login"])
+    token=CustomerPortalToken.objects.create(token=f"acct_{uuid4().hex}",customer=account.customer,expires_at=timezone.now()+timedelta(days=7),created_by=None)
+    return JsonResponse({"token":token.token,"expires_at":token.expires_at.isoformat(),"customer":{"id":account.customer_id,"name":account.customer.name,"company":account.customer.company,"email":account.email},"portal_path":f"/portal/{token.token}"})
 
 @csrf_exempt
 @roles_allowed("admin", "manager", "sales")

@@ -5,7 +5,7 @@ from django.test import TestCase
 from django.utils import timezone
 
 from .auth import issue_token
-from .models import ApprovalRequest, AuditLog, AutomationRule, Customer, CustomerPortalToken, DemandHistory, FinanceTaxRule, FleetVehicle, GoodsReceipt, IntegrationConnection, Invoice, MobileTask, Organization, OrganizationInvitation, OrganizationMembership, Payment, PermissionDefinition, PortalAccessLog, Product, Profile, PurchaseOrder, PurchaseOrderStatusEvent, PurchasePlan, PwaDevice, QuotationItem, Quotation, RFQ, RFQOffer, RolePermission, SalesOrder, SalesOrderItem, StockLedgerEntry, StockReservation, SupportTicket, Supplier, SupplierContract, SupplierInvoice, SyncConflict, UserSecurityProfile, UserSession, VehicleFitment, Warehouse, WebhookDelivery, WebhookSubscription
+from .models import ApprovalRequest, AuditLog, AutomationRule, Customer, CustomerPortalAccount, CustomerPortalToken, DemandHistory, FinanceTaxRule, FleetVehicle, GoodsReceipt, IntegrationConnection, Invoice, MobileTask, Organization, OrganizationInvitation, OrganizationMembership, Payment, PermissionDefinition, PortalAccessLog, Product, Profile, PurchaseOrder, PurchaseOrderStatusEvent, PurchasePlan, PwaDevice, QuotationItem, Quotation, RFQ, RFQOffer, RolePermission, SalesOrder, SalesOrderItem, StockLedgerEntry, StockReservation, SupportTicket, Supplier, SupplierContract, SupplierInvoice, SyncConflict, UserSecurityProfile, UserSession, VehicleFitment, Warehouse, WebhookDelivery, WebhookSubscription
 
 
 class DemandPlanningApiTests(TestCase):
@@ -572,3 +572,15 @@ class DemandPlanningApiTests(TestCase):
         terminate = self.client.post("/api/security/", data={"action":"terminate","id":session.id}, content_type="application/json", **self.auth_headers(self.admin))
         self.assertEqual(terminate.status_code, 200)
         self.assertEqual(self.client.get("/api/dashboard/", HTTP_AUTHORIZATION=f"Bearer {manager_token}").status_code, 401)
+
+    def test_customer_portal_account_login_issues_scoped_expiring_portal_token(self):
+        customer=Customer.objects.create(name="Portal Customer",company="Portal Garage",email="portal@example.com")
+        created=self.client.post("/api/portal/accounts/", data={"action":"create","customer_id":customer.id,"email":"portal@example.com","password":"portalpass123"}, content_type="application/json", **self.auth_headers(self.admin))
+        self.assertEqual(created.status_code, 201)
+        self.assertTrue(CustomerPortalAccount.objects.filter(customer=customer,active=True).exists())
+        login=self.client.post("/api/portal/login/", data={"email":"portal@example.com","password":"portalpass123"}, content_type="application/json")
+        self.assertEqual(login.status_code, 200)
+        token=login.json()["token"]
+        portal=self.client.get(f"/api/portal/?token={token}")
+        self.assertEqual(portal.status_code, 200)
+        self.assertEqual(portal.json()["customer"]["id"], customer.id)

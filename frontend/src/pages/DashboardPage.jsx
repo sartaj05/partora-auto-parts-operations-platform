@@ -4,9 +4,10 @@ import { createEndpoint, loadEndpoint } from '../api/client'
 import { useAuth } from '../context/AuthContext'
 import CreateModal from '../components/CreateModal'
 import StatusBadge from '../components/StatusBadge'
-import { BarcodePage, VinFitmentPage, MobileWarehousePage, PurchaseOrdersPage, ReceivingPage, WarehouseControlPage, WarehousesPage, ReorderPage, DemandPlanningPage, RFQPage, SalesFlowPage, FulfillmentPage, NotificationsPage, CopilotPage, FinancePage, WarrantyIntelligencePage, ReturnsPage, InventoryControlPage, SupplierIntelligencePage, DealerPortalPage, PortalPage, CustomersPage, PricingPage, CommandCenterPage, GovernancePage, IntegrationsPage, PwaAdminPage, TenancyPage, PermissionMatrixPage, AutomationPage, FleetPage, SecurityPage, DocumentsPage, DeliveryPage, PartnerApiPage, PredictiveFleetPage, CustomerServicePage, SaasBillingPage, ObservabilityPage, InventoryNetworkPage } from './OperationsPages'
+import { BarcodePage, VinFitmentPage, MobileWarehousePage, PurchaseOrdersPage, ReceivingPage, WarehouseControlPage, WarehousesPage, ReorderPage, DemandPlanningPage, RFQPage, SalesFlowPage, FulfillmentPage, NotificationsPage, CopilotPage, FinancePage, WarrantyIntelligencePage, ReturnsPage, InventoryControlPage, SupplierIntelligencePage, DealerPortalPage, PortalPage, PortalAccountsPage, CustomersPage, PricingPage, CommandCenterPage, GovernancePage, IntegrationsPage, PwaAdminPage, TenancyPage, PermissionMatrixPage, AutomationPage, FleetPage, SecurityPage, DocumentsPage, DeliveryPage, PartnerApiPage, PredictiveFleetPage, CustomerServicePage, SaasBillingPage, ObservabilityPage, InventoryNetworkPage } from './OperationsPages'
 
 const nav = [
+  ['portal_accounts','/app/portal-accounts','Portal accounts','@'],
   ['permissions','/app/permissions','Permission matrix','P'],
   ['customer_service','/app/customer-service','Customer service','?'],
   ['saas_billing','/app/saas-billing','SaaS billing','$'],
@@ -84,7 +85,7 @@ function Shell({ children }) {
         <div className="workspace-tag">Operations workspace</div>
         <ScopeSelector />
         <nav className="app-nav">
-          {nav.filter(([key]) => modules.includes(key)).map(([key,path,label,icon]) => {
+          {nav.filter(([key]) => modules.includes(key) || (key === 'portal_accounts' && modules.includes('portal'))).map(([key,path,label,icon]) => {
             const active = path === '/app' ? location.pathname === '/app' : location.pathname.startsWith(path)
             return <Link className={active ? 'active' : ''} key={key} to={path}><span>{icon}</span>{label}</Link>
           })}
@@ -250,6 +251,7 @@ export default function DashboardPage(){
     <Route path="inventory-control" element={<Allowed module="inventory_control"><InventoryControlPage/></Allowed>}/>
     <Route path="supplier-performance" element={<Allowed module="supplier_performance"><SupplierIntelligencePage/></Allowed>}/>
     <Route path="portal" element={<Allowed module="portal"><DealerPortalPage/></Allowed>}/>
+    <Route path="portal-accounts" element={<Allowed module="portal"><PortalAccountsPage/></Allowed>}/>
     <Route path="customers" element={<Allowed module="crm"><CustomersPage/></Allowed>}/>
     <Route path="pricing" element={<Allowed module="pricing"><PricingPage/></Allowed>}/>
     <Route path="analytics" element={<Allowed module="analytics"><CommandCenterPage/></Allowed>}/>

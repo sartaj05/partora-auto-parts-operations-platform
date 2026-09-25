@@ -422,6 +422,16 @@ class CustomerPortalToken(models.Model):
     created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name="issued_portal_tokens")
     created_at = models.DateTimeField(auto_now_add=True)
 
+
+class CustomerPortalAccount(models.Model):
+    customer = models.OneToOneField(Customer, on_delete=models.CASCADE, related_name="portal_account")
+    email = models.EmailField(unique=True)
+    password_hash = models.CharField(max_length=256)
+    active = models.BooleanField(default=True)
+    last_login = models.DateTimeField(null=True, blank=True)
+    created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name="portal_accounts_created")
+    created_at = models.DateTimeField(auto_now_add=True)
+
 # Feature 08: tier pricing and discount rules.
 Product.add_to_class("cost_price", models.DecimalField(max_digits=12, decimal_places=2, default=0))
 Product.add_to_class("wholesale_price", models.DecimalField(max_digits=12, decimal_places=2, default=0))

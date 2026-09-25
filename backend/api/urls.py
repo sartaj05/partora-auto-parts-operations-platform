@@ -48,6 +48,8 @@ urlpatterns = [
     path("customers/", views.customers_view),
     path("portal/", views.portal_view),
     path("portal/issue/", views.portal_issue_view),
+    path("portal/accounts/", views.portal_accounts_view),
+    path("portal/login/", views.portal_account_login_view),
     path("pricing/", views.pricing_view),
     path("analytics/", views.analytics_view),
     path("governance/", views.governance_view),

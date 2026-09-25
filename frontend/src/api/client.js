@@ -76,6 +76,7 @@ const fallback = {
   '/pwa-admin/': () => pwaState,
   '/tenancy/': () => tenantState,
   '/permissions/': () => ({ roles:['admin','manager','sales','store'], actions:['view','create','edit','approve','export'], modules:[] }),
+  '/portal/accounts/': () => ({ accounts:[] }),
   '/automation/': () => automationState,
   '/fleet/': () => fleetState,
   '/security/': () => securityState,
@@ -115,6 +116,11 @@ export async function loadPortal(token) {
 export async function portalAction(token, payload) {
   try { return { ...(await request('/portal/', {method:'POST',body:JSON.stringify({token,...payload})})), demoMode:false } }
   catch (error) { if(error.status && error.status < 500) throw error; await sleep(120); const data=demoPortal(token); if(payload.action==='approve_quote'){const q=data.quotes.find(x=>x.id===Number(payload.quote_id));if(q)q.status='approved'} if(payload.action==='repeat_order'){const o=data.orders.find(x=>x.id===Number(payload.order_id));if(o)data.quotes.unshift({id:Date.now(),quote_no:`QT-DEMO-${String(Date.now()).slice(-4)}`,total:o.total,status:'draft',valid_until:new Date(Date.now()+7*86400000).toISOString().slice(0,10)})} return { ...data, demoMode:true } }
+}
+
+export async function portalAccountLogin(email, password) {
+  const result = await request('/portal/login/', { method:'POST', body: JSON.stringify({ email, password }) })
+  return result
 }
 
 function createMock(path, payload, role) {
