@@ -5,7 +5,7 @@ from django.test import TestCase
 from django.utils import timezone
 
 from .auth import issue_token
-from .models import AutomationRule, Customer, CustomerPortalToken, DemandHistory, FleetVehicle, GoodsReceipt, IntegrationConnection, Organization, OrganizationInvitation, OrganizationMembership, PortalAccessLog, Product, Profile, PurchaseOrder, PurchaseOrderStatusEvent, PurchasePlan, QuotationItem, Quotation, RFQ, RFQOffer, SalesOrder, SalesOrderItem, StockLedgerEntry, StockReservation, SupportTicket, Supplier, SupplierContract, SupplierInvoice, VehicleFitment, WebhookDelivery, WebhookSubscription
+from .models import AutomationRule, Customer, CustomerPortalToken, DemandHistory, FleetVehicle, GoodsReceipt, IntegrationConnection, MobileTask, Organization, OrganizationInvitation, OrganizationMembership, PortalAccessLog, Product, Profile, PurchaseOrder, PurchaseOrderStatusEvent, PurchasePlan, PwaDevice, QuotationItem, Quotation, RFQ, RFQOffer, SalesOrder, SalesOrderItem, StockLedgerEntry, StockReservation, SupportTicket, Supplier, SupplierContract, SupplierInvoice, SyncConflict, VehicleFitment, WebhookDelivery, WebhookSubscription
 
 
 class DemandPlanningApiTests(TestCase):
@@ -455,3 +455,20 @@ class DemandPlanningApiTests(TestCase):
         self.assertEqual(delivered.status_code, 200)
         self.assertEqual(WebhookDelivery.objects.filter(subscription=subscription, status="delivered").count(), 1)
         self.assertEqual(subscription.__class__.objects.get(id=subscription.id).deliveries, 1)
+
+    def test_mobile_queue_is_durable_idempotent_and_cursor_based(self):
+        payload = {"action": "scan", "device_key": "scanner-01", "device_name": "Receiving scanner", "type": "count", "sku": "TEST-001", "quantity": 3, "idempotency_key": "mobile-key-1"}
+        first = self.client.post("/api/mobile-warehouse/", data=payload, content_type="application/json", **self.auth_headers(self.store))
+        repeat = self.client.post("/api/mobile-warehouse/", data=payload, content_type="application/json", **self.auth_headers(self.store))
+        self.assertEqual(first.status_code, 201)
+        self.assertEqual(repeat.status_code, 200)
+        self.assertEqual(MobileTask.objects.filter(idempotency_key="mobile-key-1").count(), 1)
+
+        sync = self.client.post("/api/mobile-warehouse/", data={"action": "sync", "device_key": "scanner-01"}, content_type="application/json", **self.auth_headers(self.store))
+        self.assertEqual(sync.status_code, 200)
+        self.assertEqual(sync.json()["item"]["synced_count"], 1)
+        self.assertEqual(PwaDevice.objects.get(device_key="scanner-01").sync_cursor, 1)
+
+        conflict = self.client.post("/api/mobile-warehouse/", data={"action": "conflict", "device_key": "scanner-01", "reference": "COUNT-1", "field": "quantity", "local_value": "4", "server_value": "3"}, content_type="application/json", **self.auth_headers(self.store))
+        self.assertEqual(conflict.status_code, 201)
+        self.assertTrue(SyncConflict.objects.filter(reference="COUNT-1", status="needs_review").exists())

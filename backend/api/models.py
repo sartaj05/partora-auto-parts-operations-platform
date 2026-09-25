@@ -530,6 +530,8 @@ class PwaDevice(models.Model):
     warehouse = models.ForeignKey(Warehouse, on_delete=models.SET_NULL, null=True, blank=True, related_name="pwa_devices")
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="offline")
     app_version = models.CharField(max_length=30, blank=True)
+    device_key = models.CharField(max_length=120, unique=True, null=True, blank=True)
+    sync_cursor = models.PositiveIntegerField(default=0)
     last_seen = models.DateTimeField(null=True, blank=True)
     active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -545,6 +547,21 @@ class SyncConflict(models.Model):
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="needs_review")
     resolved_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name="resolved_sync_conflicts")
     resolved_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+
+class MobileTask(models.Model):
+    STATUS_CHOICES = [("queued", "Queued"), ("synced", "Synced"), ("complete", "Complete"), ("conflict", "Conflict")]
+    device = models.ForeignKey(PwaDevice, on_delete=models.CASCADE, related_name="tasks")
+    task_type = models.CharField(max_length=30)
+    reference = models.CharField(max_length=80)
+    location = models.CharField(max_length=80, blank=True)
+    product = models.ForeignKey(Product, on_delete=models.PROTECT, related_name="mobile_tasks")
+    quantity = models.PositiveIntegerField(default=1)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="queued")
+    idempotency_key = models.CharField(max_length=120, unique=True)
+    synced_at = models.DateTimeField(null=True, blank=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
 
@@ -694,7 +711,7 @@ class OrganizationInvitation(models.Model):
 # one place so every new enterprise feature has the same isolation boundary.
 for _tenant_model in [
     Warehouse, IntegrationConnection, WebhookSubscription, IntegrationLog, WebhookDelivery,
-    PwaDevice, SyncConflict, AutomationRule, AutomationRun, FleetVehicle, FleetWorkOrder,
+    PwaDevice, SyncConflict, MobileTask, AutomationRule, AutomationRun, FleetVehicle, FleetWorkOrder,
     SupportTicket, SupportCommunication, DeliveryRoute, Shipment,
 ]:
     _tenant_model.add_to_class("organization", models.ForeignKey(Organization, on_delete=models.CASCADE, null=True, blank=True, related_name=f"{_tenant_model.__name__.lower()}_records"))

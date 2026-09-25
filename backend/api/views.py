@@ -14,7 +14,7 @@ from django.http import JsonResponse
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 from .auth import api_login_required, get_current_organization, issue_token, roles_allowed
-from .models import Product, Quotation, QuotationItem, StockMovement, Supplier, SupplierContract, VehicleFitment, PurchaseOrder, PurchaseOrderItem, PurchaseOrderStatusEvent, GoodsReceipt, GoodsReceiptLine, SupplierInvoice, Warehouse, WarehouseStock, StockTransfer, SalesOrder, SalesOrderItem, Invoice, Payment, ReturnRequest, InventoryCount, InventoryCountLine, ProductLot, SupplierPriceSnapshot, Customer, CustomerPortalToken, PortalAccessLog, PriceRule, Notification, ApprovalRequest, AuditLog, DemandHistory, PurchasePlan, RFQ, RFQOffer, IntegrationConnection, WebhookSubscription, IntegrationLog, WebhookDelivery, PwaDevice, SyncConflict, AutomationRule, AutomationRun, FleetVehicle, FleetWorkOrder, SupportTicket, SupportCommunication, DeliveryRoute, Shipment, Organization, OrganizationMembership, OrganizationInvitation, StockLedgerEntry, StockReservation
+from .models import Product, Quotation, QuotationItem, StockMovement, Supplier, SupplierContract, VehicleFitment, PurchaseOrder, PurchaseOrderItem, PurchaseOrderStatusEvent, GoodsReceipt, GoodsReceiptLine, SupplierInvoice, Warehouse, WarehouseStock, StockTransfer, SalesOrder, SalesOrderItem, Invoice, Payment, ReturnRequest, InventoryCount, InventoryCountLine, ProductLot, SupplierPriceSnapshot, Customer, CustomerPortalToken, PortalAccessLog, PriceRule, Notification, ApprovalRequest, AuditLog, DemandHistory, PurchasePlan, RFQ, RFQOffer, IntegrationConnection, WebhookSubscription, IntegrationLog, WebhookDelivery, PwaDevice, SyncConflict, MobileTask, AutomationRule, AutomationRun, FleetVehicle, FleetWorkOrder, SupportTicket, SupportCommunication, DeliveryRoute, Shipment, Organization, OrganizationMembership, OrganizationInvitation, StockLedgerEntry, StockReservation
 from .serializers import product_dict, quotation_dict, supplier_dict
 
 ROLE_MODULES = {
@@ -419,21 +419,37 @@ def receiving_view(request):
 @csrf_exempt
 @roles_allowed("admin", "manager", "store")
 def mobile_warehouse_view(request):
+    organization=request.organization
     if request.method == "GET":
+        device_key=request.GET.get("device_key") or f"user:{request.api_user.id}"
+        device=PwaDevice.objects.filter(organization=organization,device_key=device_key).first()
         tasks=[]
-        for movement in StockMovement.objects.select_related("product").order_by("-created_at")[:25]:
-            tasks.append({"id": movement.id, "type": "receive" if movement.movement_type == "in" else "pick", "reference": movement.reference or f"SCAN-{movement.id}", "location": "DEL-MAIN", "sku": movement.product.sku, "product": movement.product.name, "quantity": movement.quantity, "status": "synced", "synced": True, "created_at": movement.created_at.isoformat()})
-        return JsonResponse({"queue": tasks, "last_sync": timezone.now().isoformat()})
+        if device:
+            for task in device.tasks.select_related("product").order_by("-created_at")[:100]:
+                tasks.append({"id": task.id, "type": task.task_type, "reference": task.reference, "location": task.location, "sku": task.product.sku, "product": task.product.name, "quantity": task.quantity, "status": task.status, "synced": task.synced_at is not None, "created_at": task.created_at.isoformat()})
+        last_sync=device.last_seen.isoformat() if device and device.last_seen else None
+        return JsonResponse({"queue": tasks, "last_sync": last_sync, "cursor": device.sync_cursor if device else 0, "device_id": device.id if device else None})
     data=parse_body(request) or {}; action=str(data.get("action", "scan"))
     try:
+        device_key=str(data.get("device_key") or f"user:{request.api_user.id}")[:120]
+        device,created=PwaDevice.objects.get_or_create(organization=organization,device_key=device_key,defaults={"name":str(data.get("device_name") or device_key)[:140],"app_version":str(data.get("app_version") or "")[:30],"status":"online","last_seen":timezone.now()})
+        device.status="online"; device.last_seen=timezone.now(); device.save(update_fields=["status","last_seen"])
         if action == "scan":
             product=Product.objects.get(sku=str(data.get("sku", "")).strip().upper())
-            item={"id": f"scan-{uuid4().hex[:8]}", "type": str(data.get("type", "count")), "reference": str(data.get("reference") or f"SCAN-{timezone.now():%y%m%d}-{uuid4().hex[:4].upper()}"), "location": str(data.get("location", "DEL-MAIN")), "sku": product.sku, "product": product.name, "quantity": max(1, int(data.get("quantity", 1))), "status": "queued", "synced": False, "created_at": timezone.now().isoformat()}
+            idem=str(data.get("idempotency_key") or f"{device_key}:{data.get('reference') or uuid4().hex}")[:120]
+            task,created=MobileTask.objects.get_or_create(organization=organization,idempotency_key=idem,defaults={"device":device,"task_type":str(data.get("type", "count")),"reference":str(data.get("reference") or f"SCAN-{timezone.now():%y%m%d}-{uuid4().hex[:4].upper()}"),"location":str(data.get("location", "DEL-MAIN")),"product":product,"quantity":max(1, int(data.get("quantity", 1)))})
+            item={"id": task.id, "type": task.task_type, "reference": task.reference, "location": task.location, "sku": task.product.sku, "product": task.product.name, "quantity": task.quantity, "status": task.status, "synced": task.synced_at is not None, "created_at": task.created_at.isoformat()}
             record_audit(request, "mobile warehouse scan", "product", product.id, f"{item['type']} / {item['reference']}")
-            return JsonResponse({"item": item}, status=201)
+            return JsonResponse({"item": item}, status=201 if created else 200)
         if action == "sync":
-            return JsonResponse({"item": {"last_sync": timezone.now().isoformat(), "synced": True}})
-        return JsonResponse({"item": {"id": data.get("id"), "status": "complete"}})
+            now=timezone.now(); pending=MobileTask.objects.filter(organization=organization,device=device,synced_at__isnull=True,status="queued"); synced_count=pending.count(); pending.update(synced_at=now,status="synced"); device.sync_cursor += synced_count; device.last_seen=now; device.save(update_fields=["sync_cursor","last_seen"])
+            return JsonResponse({"item": {"last_sync": now.isoformat(), "synced": True, "synced_count": synced_count, "cursor": device.sync_cursor, "queued": MobileTask.objects.filter(organization=organization,device=device,synced_at__isnull=True).count()}})
+        if action == "conflict":
+            conflict=SyncConflict.objects.create(organization=organization,device=device,reference=str(data.get("reference") or "mobile-conflict"),field=str(data.get("field") or "quantity"),local_value=str(data.get("local_value") or ""),server_value=str(data.get("server_value") or ""))
+            return JsonResponse({"item":{"id":conflict.id,"status":conflict.status}},status=201)
+        task=MobileTask.objects.get(id=int(data["id"]),organization=organization,device=device)
+        task.status="complete"; task.completed_at=timezone.now(); task.save(update_fields=["status","completed_at"])
+        return JsonResponse({"item":{"id":task.id,"status":task.status,"synced":task.synced_at is not None}})
     except Exception as exc:
         return JsonResponse({"detail": f"Could not process mobile warehouse action: {exc}"}, status=400)
 
