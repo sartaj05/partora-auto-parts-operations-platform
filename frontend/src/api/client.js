@@ -14,6 +14,7 @@ async function request(path, options = {}) {
     headers: {
       'Content-Type': 'application/json',
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...(localStorage.getItem('partora_branch') ? { 'X-Partora-Branch': localStorage.getItem('partora_branch') } : {}),
       ...(options.headers || {}),
     },
   })

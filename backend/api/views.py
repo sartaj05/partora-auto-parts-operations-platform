@@ -9,8 +9,8 @@ from django.db.models import Count, DecimalField, ExpressionWrapper, F, Max, Q, 
 from django.http import JsonResponse
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
-from .auth import api_login_required, issue_token, roles_allowed
-from .models import Product, Quotation, StockMovement, Supplier, SupplierContract, VehicleFitment, PurchaseOrder, PurchaseOrderItem, GoodsReceipt, GoodsReceiptLine, SupplierInvoice, Warehouse, WarehouseStock, StockTransfer, SalesOrder, SalesOrderItem, Invoice, Payment, ReturnRequest, InventoryCount, InventoryCountLine, ProductLot, SupplierPriceSnapshot, Customer, CustomerPortalToken, PriceRule, Notification, ApprovalRequest, AuditLog, DemandHistory, PurchasePlan, RFQ, RFQOffer, IntegrationConnection, WebhookSubscription, IntegrationLog, PwaDevice, SyncConflict, AutomationRule, AutomationRun, FleetVehicle, FleetWorkOrder, SupportTicket, SupportCommunication, DeliveryRoute, Shipment
+from .auth import api_login_required, get_current_organization, issue_token, roles_allowed
+from .models import Product, Quotation, StockMovement, Supplier, SupplierContract, VehicleFitment, PurchaseOrder, PurchaseOrderItem, GoodsReceipt, GoodsReceiptLine, SupplierInvoice, Warehouse, WarehouseStock, StockTransfer, SalesOrder, SalesOrderItem, Invoice, Payment, ReturnRequest, InventoryCount, InventoryCountLine, ProductLot, SupplierPriceSnapshot, Customer, CustomerPortalToken, PriceRule, Notification, ApprovalRequest, AuditLog, DemandHistory, PurchasePlan, RFQ, RFQOffer, IntegrationConnection, WebhookSubscription, IntegrationLog, PwaDevice, SyncConflict, AutomationRule, AutomationRun, FleetVehicle, FleetWorkOrder, SupportTicket, SupportCommunication, DeliveryRoute, Shipment, Organization, OrganizationMembership, OrganizationInvitation
 from .serializers import product_dict, quotation_dict, supplier_dict
 
 ROLE_MODULES = {
@@ -55,19 +55,23 @@ def login_view(request):
     if not user:
         return JsonResponse({"detail": "Invalid email or password"}, status=401)
     role = user.profile.role
+    organization = get_current_organization(user)
     return JsonResponse({
         "token": issue_token(user),
         "user": {"id": user.id, "name": user.get_full_name() or email.split("@")[0].title(), "email": user.email or email, "role": role},
         "modules": ROLE_MODULES[role],
+        "organization": {"id": organization.id, "name": organization.name, "plan": organization.plan},
     })
 
 @api_login_required
 def me_view(request):
     user = request.api_user
     role = user.profile.role
+    organization = get_current_organization(user)
     return JsonResponse({
         "user": {"id": user.id, "name": user.get_full_name() or user.username, "email": user.email, "role": role},
         "modules": ROLE_MODULES[role],
+        "organization": {"id": organization.id, "name": organization.name, "plan": organization.plan},
     })
 
 @api_login_required
@@ -458,21 +462,22 @@ def warranty_view(request):
 @csrf_exempt
 @roles_allowed("admin", "manager", "store")
 def integrations_view(request):
+    organization=request.organization
     if request.method == "GET":
-        connections=[{"id":x.id,"name":x.name,"type":x.integration_type,"status":x.status,"last_sync":x.last_sync.isoformat() if x.last_sync else None,"records":x.records} for x in IntegrationConnection.objects.order_by("name")]
-        webhooks=[{"id":x.id,"event":x.event,"target":x.target,"status":x.status,"deliveries":x.deliveries} for x in WebhookSubscription.objects.order_by("-created_at")[:50]]
-        logs=[{"id":x.id,"event":x.event,"target":x.target,"status":x.status,"created_at":x.created_at.isoformat()} for x in IntegrationLog.objects.order_by("-created_at")[:50]]
+        connections=[{"id":x.id,"name":x.name,"type":x.integration_type,"status":x.status,"last_sync":x.last_sync.isoformat() if x.last_sync else None,"records":x.records} for x in IntegrationConnection.objects.filter(organization=organization).order_by("name")]
+        webhooks=[{"id":x.id,"event":x.event,"target":x.target,"status":x.status,"deliveries":x.deliveries} for x in WebhookSubscription.objects.filter(organization=organization).order_by("-created_at")[:50]]
+        logs=[{"id":x.id,"event":x.event,"target":x.target,"status":x.status,"created_at":x.created_at.isoformat()} for x in IntegrationLog.objects.filter(organization=organization).order_by("-created_at")[:50]]
         return JsonResponse({"connections":connections,"webhooks":webhooks,"logs":logs})
     data=parse_body(request) or {}; action=str(data.get("action","connect"))
     try:
         if action == "webhook":
-            item=WebhookSubscription.objects.create(event=str(data.get("event","invoice.paid")),target=str(data.get("target","https://client.example/webhooks/partora")),created_by=request.api_user)
+            item=WebhookSubscription.objects.create(organization=organization,event=str(data.get("event","invoice.paid")),target=str(data.get("target","https://client.example/webhooks/partora")),created_by=request.api_user)
             payload={"id":item.id,"event":item.event,"target":item.target,"status":item.status,"deliveries":item.deliveries}
-            IntegrationLog.objects.create(event="webhook.created",target=item.target,detail=item.event)
+            IntegrationLog.objects.create(organization=organization,event="webhook.created",target=item.target,detail=item.event)
         else:
-            item=IntegrationConnection.objects.create(name=str(data.get("name","New connector")),integration_type=str(data.get("type","webhook")),status="connected",last_sync=timezone.now(),created_by=request.api_user)
+            item=IntegrationConnection.objects.create(organization=organization,name=str(data.get("name","New connector")),integration_type=str(data.get("type","webhook")),status="connected",last_sync=timezone.now(),created_by=request.api_user)
             payload={"id":item.id,"name":item.name,"type":item.integration_type,"status":item.status,"last_sync":item.last_sync.isoformat(),"records":item.records}
-            IntegrationLog.objects.create(connection=item,event="integration.connected",target=item.name,detail=item.integration_type)
+            IntegrationLog.objects.create(organization=organization,connection=item,event="integration.connected",target=item.name,detail=item.integration_type)
     except Exception as exc:
         return JsonResponse({"detail":f"Could not configure integration: {exc}"},status=400)
     record_audit(request,"integration setup","integration",payload["id"],payload.get("name",payload.get("event","webhook")))
@@ -481,22 +486,27 @@ def integrations_view(request):
 @csrf_exempt
 @roles_allowed("admin", "manager", "store")
 def pwa_admin_view(request):
+    organization=request.organization
     if request.method == "GET":
-        devices=[{"id":x.id,"name":x.name,"warehouse":x.warehouse.code if x.warehouse else "Unassigned","status":x.status,"app_version":x.app_version,"last_seen":x.last_seen.isoformat() if x.last_seen else None} for x in PwaDevice.objects.select_related("warehouse").filter(active=True).order_by("name")]
-        conflicts=[{"id":x.id,"reference":x.reference,"field":x.field,"local_value":x.local_value,"server_value":x.server_value,"status":x.status} for x in SyncConflict.objects.filter(status="needs_review").order_by("-created_at")[:100]]
+        device_query=PwaDevice.objects.select_related("warehouse").filter(active=True,organization=organization)
+        if request.branch: device_query=device_query.filter(warehouse=request.branch)
+        devices=[{"id":x.id,"name":x.name,"warehouse":x.warehouse.code if x.warehouse else "Unassigned","status":x.status,"app_version":x.app_version,"last_seen":x.last_seen.isoformat() if x.last_seen else None} for x in device_query.order_by("name")]
+        conflicts=[{"id":x.id,"reference":x.reference,"field":x.field,"local_value":x.local_value,"server_value":x.server_value,"status":x.status} for x in SyncConflict.objects.filter(status="needs_review",organization=organization).order_by("-created_at")[:100]]
         sync_logs=AuditLog.objects.filter(action="pwa sync action",created_at__date=timezone.localdate())
-        last_sync=PwaDevice.objects.aggregate(last=Max("last_seen"))["last"]
+        last_sync=PwaDevice.objects.filter(organization=organization).aggregate(last=Max("last_seen"))["last"]
         return JsonResponse({"devices":devices,"sync":{"queued":0,"synced_today":sync_logs.count(),"conflicts":len(conflicts),"last_sync":last_sync.isoformat() if last_sync else None},"conflicts":conflicts})
     data=parse_body(request) or {}; action=str(data.get("action","sync"))
     if action == "resolve":
         try:
-            conflict=SyncConflict.objects.get(id=int(data["id"]))
+            conflict=SyncConflict.objects.get(id=int(data["id"]),organization=organization)
             conflict.status="resolved"; conflict.resolved_by=request.api_user; conflict.resolved_at=timezone.now(); conflict.save(update_fields=["status","resolved_by","resolved_at"])
             item={"id":conflict.id,"status":conflict.status}
         except Exception as exc:
             return JsonResponse({"detail":f"Could not resolve sync conflict: {exc}"},status=400)
     else:
-        now=timezone.now(); PwaDevice.objects.filter(active=True).update(status="online",last_seen=now)
+        device_query=PwaDevice.objects.filter(active=True,organization=organization)
+        if request.branch: device_query=device_query.filter(warehouse=request.branch)
+        now=timezone.now(); device_query.update(status="online",last_seen=now)
         record_audit(request,"pwa sync action","device","queue","sync")
         item={"id":None,"status":"synced","last_sync":now.isoformat(),"synced":True}
     record_audit(request,"pwa sync action","device",item.get("id") or "queue",action)
@@ -505,35 +515,43 @@ def pwa_admin_view(request):
 @csrf_exempt
 @roles_allowed("admin", "manager", "store")
 def tenancy_view(request):
+    organization=request.organization
     if request.method == "GET":
-        branches=[{"id":w.id,"code":w.code,"name":w.name,"users":0,"status":"active"} for w in Warehouse.objects.filter(active=True).order_by("code")]
-        users=[{"id":request.api_user.id,"name":request.api_user.get_full_name() or request.api_user.username,"email":request.api_user.email,"role":request.api_user.profile.role,"branch":"All branches","approval_limit":500000 if request.api_user.profile.role=="admin" else 150000,"status":"active"}]
-        return JsonResponse({"organization":{"id":1,"name":"Partora Auto Parts India","plan":"Growth","branches":len(branches),"users":len(users),"monthly_events":8420},"branches":branches,"users":users})
+        branches=[{"id":w.id,"code":w.code,"name":w.name,"users":w.organization_invitations.filter(status="accepted").count(),"status":"active"} for w in Warehouse.objects.filter(active=True,organization=organization).order_by("code")]
+        users=[{"id":m.user_id,"name":m.user.get_full_name() or m.user.username,"email":m.user.email,"role":m.role,"branch":"All branches","approval_limit":float(m.approval_limit),"status":"active"} for m in organization.memberships.select_related("user").filter(active=True).order_by("user__first_name")]
+        users.extend({"id":invite.id,"name":invite.email,"email":invite.email,"role":invite.role,"branch":invite.branch.code if invite.branch else "All branches","approval_limit":float(invite.approval_limit),"status":"invited"} for invite in organization.invitations.select_related("branch").filter(status="pending").order_by("-created_at"))
+        return JsonResponse({"organization":{"id":organization.id,"name":organization.name,"plan":organization.plan.title(),"branches":len(branches),"users":len(users),"monthly_events":AuditLog.objects.filter(user__organization_memberships__organization=organization).count()},"branches":branches,"users":users})
     data=parse_body(request) or {}; action=str(data.get("action","invite"))
     if action=="branch":
-        try: branch=Warehouse.objects.create(code=str(data["code"]).strip().upper(),name=str(data["name"]).strip(),address=str(data.get("address",""))); item={"id":branch.id,"code":branch.code,"name":branch.name,"users":0,"status":"active"}
+        try: branch=Warehouse.objects.create(code=str(data["code"]).strip().upper(),name=str(data["name"]).strip(),address=str(data.get("address","")),organization=organization); item={"id":branch.id,"code":branch.code,"name":branch.name,"users":0,"status":"active"}
         except Exception as exc: return JsonResponse({"detail":f"Could not create branch: {exc}"},status=400)
-    else: item={"id":uuid4().hex[:8],"name":str(data.get("name","Invited user")),"email":str(data.get("email","")),"role":str(data.get("role","store")),"branch":str(data.get("branch","All branches")),"approval_limit":float(data.get("approval_limit",0) or 0),"status":"invited"}
+    else:
+        try:
+            branch=Warehouse.objects.filter(organization=organization).filter(code=str(data.get("branch","")).strip().upper()).first() if data.get("branch") else None
+            invite=OrganizationInvitation.objects.create(organization=organization,email=str(data["email"]).strip().lower(),role=str(data.get("role","store")),branch=branch,approval_limit=float(data.get("approval_limit",0) or 0),token=f"invite_{uuid4().hex}",invited_by=request.api_user)
+            item={"id":invite.id,"name":invite.email,"email":invite.email,"role":invite.role,"branch":branch.code if branch else "All branches","approval_limit":float(invite.approval_limit),"status":invite.status}
+        except Exception as exc: return JsonResponse({"detail":f"Could not invite user: {exc}"},status=400)
     record_audit(request,"tenant administration","organization",item["id"],action); return JsonResponse({"item":item},status=201)
 
 @csrf_exempt
 @roles_allowed("admin", "manager", "store")
 def automation_view(request):
+    organization=request.organization
     if request.method == "GET":
-        rules=[{"id":x.id,"name":x.name,"trigger":x.trigger,"action":x.action,"status":x.status,"runs":x.runs,"last_run":x.last_run.isoformat() if x.last_run else None} for x in AutomationRule.objects.order_by("name")]
-        runs=[{"id":x.id,"rule":x.rule.name,"result":x.result,"detail":x.detail,"created_at":x.created_at.isoformat()} for x in AutomationRun.objects.select_related("rule").order_by("-created_at")[:100]]
+        rules=[{"id":x.id,"name":x.name,"trigger":x.trigger,"action":x.action,"status":x.status,"runs":x.runs,"last_run":x.last_run.isoformat() if x.last_run else None} for x in AutomationRule.objects.filter(organization=organization).order_by("name")]
+        runs=[{"id":x.id,"rule":x.rule.name,"result":x.result,"detail":x.detail,"created_at":x.created_at.isoformat()} for x in AutomationRun.objects.select_related("rule").filter(organization=organization).order_by("-created_at")[:100]]
         return JsonResponse({"rules":rules,"runs":runs})
     data=parse_body(request) or {}; action=str(data.get("action","rule"))
     try:
         if action == "rule":
-            rule=AutomationRule.objects.create(name=str(data.get("name","New automation rule")),trigger=str(data.get("trigger","stock.below_reorder")),action=str(data.get("rule_action","Send notification")),created_by=request.api_user)
+            rule=AutomationRule.objects.create(organization=organization,name=str(data.get("name","New automation rule")),trigger=str(data.get("trigger","stock.below_reorder")),action=str(data.get("rule_action","Send notification")),created_by=request.api_user)
         else:
-            rule=AutomationRule.objects.get(id=int(data["id"]))
+            rule=AutomationRule.objects.get(id=int(data["id"]),organization=organization)
             if action == "toggle":
                 rule.status="paused" if rule.status == "active" else "active"
             elif action == "run":
                 if rule.status != "active": raise ValueError("Paused rules cannot be run")
-                rule.runs += 1; rule.last_run=timezone.now(); AutomationRun.objects.create(rule=rule,result="success",detail="Action completed")
+                rule.runs += 1; rule.last_run=timezone.now(); AutomationRun.objects.create(organization=organization,rule=rule,result="success",detail="Action completed")
             else: raise ValueError("Unknown automation action")
             rule.save(update_fields=["status","runs","last_run"])
         item={"id":rule.id,"name":rule.name,"trigger":rule.trigger,"action":rule.action,"status":rule.status,"runs":rule.runs,"last_run":rule.last_run.isoformat() if rule.last_run else None}
@@ -545,12 +563,13 @@ def automation_view(request):
 @csrf_exempt
 @roles_allowed("admin", "manager", "sales", "store")
 def fleet_view(request):
+    organization=request.organization
     def vehicle_item(vehicle):
         return {"id":vehicle.id,"registration":vehicle.registration,"customer":vehicle.customer,"make":vehicle.make,"model":vehicle.model,"year":vehicle.year,"mileage":vehicle.mileage,"next_service":vehicle.next_service.isoformat(),"status":vehicle.status}
     def work_order_item(order):
         return {"id":order.id,"order_no":order.order_no,"registration":order.registration,"customer":order.customer,"technician":order.technician,"status":order.status,"due_date":order.due_date.isoformat(),"parts_value":float(order.parts_value),"labor_value":float(order.labor_value),"notes":order.notes}
     if request.method == "GET":
-        today=timezone.localdate(); vehicles=list(FleetVehicle.objects.order_by("next_service")); orders=FleetWorkOrder.objects.order_by("due_date")[:100]
+        today=timezone.localdate(); vehicles=list(FleetVehicle.objects.filter(organization=organization).order_by("next_service")); orders=FleetWorkOrder.objects.filter(organization=organization).order_by("due_date")[:100]
         reminders=[]
         for vehicle in vehicles:
             days=(vehicle.next_service-today).days
@@ -562,14 +581,14 @@ def fleet_view(request):
         if action == "vehicle":
             next_service=date.fromisoformat(str(data["next_service"])); today=timezone.localdate(); days=(next_service-today).days
             status="overdue" if days < 0 else "due_soon" if days <= 30 else "healthy"
-            vehicle=FleetVehicle.objects.create(registration=str(data["registration"]).strip().upper(),customer=str(data["customer"]).strip(),make=str(data["make"]).strip(),model=str(data["model"]).strip(),year=int(data.get("year",2022) or 2022),mileage=max(0,int(data.get("mileage",0) or 0)),next_service=next_service,status=status)
+            vehicle=FleetVehicle.objects.create(organization=organization,registration=str(data["registration"]).strip().upper(),customer=str(data["customer"]).strip(),make=str(data["make"]).strip(),model=str(data["model"]).strip(),year=int(data.get("year",2022) or 2022),mileage=max(0,int(data.get("mileage",0) or 0)),next_service=next_service,status=status)
             item=vehicle_item(vehicle)
         elif action == "work_order":
-            vehicle=FleetVehicle.objects.filter(registration=str(data.get("registration","")).strip().upper()).first()
-            order=FleetWorkOrder.objects.create(order_no=f"WO-{timezone.now():%y%m%d}-{uuid4().hex[:4].upper()}",vehicle=vehicle,registration=str(data["registration"]).strip().upper(),customer=str(data["customer"]).strip(),technician=str(data.get("technician","")).strip(),due_date=date.fromisoformat(str(data["due_date"])),parts_value=float(data.get("parts_value",0) or 0),labor_value=float(data.get("labor_value",0) or 0),notes=str(data.get("notes","")).strip(),created_by=request.api_user)
+            vehicle=FleetVehicle.objects.filter(organization=organization,registration=str(data.get("registration","")).strip().upper()).first()
+            order=FleetWorkOrder.objects.create(organization=organization,order_no=f"WO-{timezone.now():%y%m%d}-{uuid4().hex[:4].upper()}",vehicle=vehicle,registration=str(data["registration"]).strip().upper(),customer=str(data["customer"]).strip(),technician=str(data.get("technician","")).strip(),due_date=date.fromisoformat(str(data["due_date"])),parts_value=float(data.get("parts_value",0) or 0),labor_value=float(data.get("labor_value",0) or 0),notes=str(data.get("notes","")).strip(),created_by=request.api_user)
             item=work_order_item(order)
         elif action == "status":
-            order=FleetWorkOrder.objects.get(id=int(data["id"])); order.status=str(data.get("status",order.status)); order.save(update_fields=["status"]); item=work_order_item(order)
+            order=FleetWorkOrder.objects.get(id=int(data["id"]),organization=organization); order.status=str(data.get("status",order.status)); order.save(update_fields=["status"]); item=work_order_item(order)
         else: raise ValueError("Unknown fleet action")
     except Exception as exc:
         return JsonResponse({"detail":f"Could not update fleet data: {exc}"},status=400)
@@ -605,25 +624,26 @@ def saas_billing_view(request):
 @csrf_exempt
 @roles_allowed("admin", "manager", "store")
 def customer_service_view(request):
+    organization=request.organization
     def ticket_item(ticket):
         return {"id":ticket.id,"ticket_no":ticket.ticket_no,"customer":ticket.customer,"subject":ticket.subject,"channel":ticket.channel,"priority":ticket.priority,"status":ticket.status,"assignee":ticket.assignee or "Unassigned","sla_due":ticket.sla_due.strftime("%Y-%m-%d %H:%M") if ticket.sla_due else None,"last_message":ticket.last_message,"messages":ticket.messages}
     if request.method == "GET":
-        tickets=list(SupportTicket.objects.order_by("-updated_at")[:100]); now=timezone.now()
+        tickets=list(SupportTicket.objects.filter(organization=organization).order_by("-updated_at")[:100]); now=timezone.now()
         overdue=sum(1 for x in tickets if x.sla_due and x.sla_due < now and x.status != "resolved")
-        communications=[{"id":x.id,"ticket_no":x.ticket.ticket_no,"actor":x.actor,"channel":x.channel,"message":x.message,"created_at":x.created_at.isoformat()} for x in SupportCommunication.objects.select_related("ticket").order_by("-created_at")[:50]]
+        communications=[{"id":x.id,"ticket_no":x.ticket.ticket_no,"actor":x.actor,"channel":x.channel,"message":x.message,"created_at":x.created_at.isoformat()} for x in SupportCommunication.objects.select_related("ticket").filter(organization=organization).order_by("-created_at")[:50]]
         return JsonResponse({"summary":{"open_tickets":sum(1 for x in tickets if x.status != "resolved"),"overdue_sla":overdue,"avg_response_hours":0,"csat":0},"tickets":[ticket_item(x) for x in tickets],"communications":communications})
     data=parse_body(request) or {}; action=str(data.get("action","ticket"))
     try:
         if action == "ticket":
             raw_sla=str(data.get("sla_due","")).strip(); sla=timezone.make_aware(datetime.fromisoformat(raw_sla.replace(" ","T"))) if raw_sla else None
-            ticket=SupportTicket.objects.create(ticket_no=f"CS-{timezone.now():%y%m%d}-{uuid4().hex[:4].upper()}",customer=str(data.get("customer","New customer")),subject=str(data.get("subject","New support request")),channel=str(data.get("channel","portal")),priority=str(data.get("priority","normal")),assignee=str(data.get("assignee","")),sla_due=sla,last_message=str(data.get("message","Ticket created from the operations desk.")),created_by=request.api_user)
-            SupportCommunication.objects.create(ticket=ticket,actor=request.api_user.get_full_name() or request.api_user.username,channel=ticket.channel,message=ticket.last_message)
+            ticket=SupportTicket.objects.create(organization=organization,ticket_no=f"CS-{timezone.now():%y%m%d}-{uuid4().hex[:4].upper()}",customer=str(data.get("customer","New customer")),subject=str(data.get("subject","New support request")),channel=str(data.get("channel","portal")),priority=str(data.get("priority","normal")),assignee=str(data.get("assignee","")),sla_due=sla,last_message=str(data.get("message","Ticket created from the operations desk.")),created_by=request.api_user)
+            SupportCommunication.objects.create(organization=organization,ticket=ticket,actor=request.api_user.get_full_name() or request.api_user.username,channel=ticket.channel,message=ticket.last_message)
         else:
-            ticket=SupportTicket.objects.get(id=int(data["id"]))
+            ticket=SupportTicket.objects.get(id=int(data["id"]),organization=organization)
             if action == "status": ticket.status=str(data.get("status",ticket.status))
             elif action == "assign": ticket.assignee=str(data.get("assignee",ticket.assignee))
             elif action == "message":
-                message=str(data.get("message","Support update recorded.")); ticket.last_message=message; ticket.messages += 1; SupportCommunication.objects.create(ticket=ticket,actor=request.api_user.get_full_name() or request.api_user.username,channel=str(data.get("channel",ticket.channel)),message=message)
+                message=str(data.get("message","Support update recorded.")); ticket.last_message=message; ticket.messages += 1; SupportCommunication.objects.create(organization=organization,ticket=ticket,actor=request.api_user.get_full_name() or request.api_user.username,channel=str(data.get("channel",ticket.channel)),message=message)
             else: raise ValueError("Unknown customer service action")
             ticket.save(update_fields=["status","assignee","last_message","messages","updated_at"])
         item=ticket_item(ticket)
@@ -659,20 +679,21 @@ def documents_view(request):
 @csrf_exempt
 @roles_allowed("admin", "manager", "sales", "store")
 def delivery_view(request):
+    organization=request.organization
     def route_item(route):
         return {"id":route.id,"route_no":route.route_no,"driver":route.driver,"vehicle":route.vehicle,"stops":route.stops,"completed":route.completed,"eta":route.eta,"status":route.status,"cost":float(route.cost)}
     def shipment_item(shipment):
         return {"id":shipment.id,"shipment_no":shipment.shipment_no,"customer":shipment.customer,"order_no":shipment.order_no,"driver":shipment.driver,"status":shipment.status,"eta":shipment.eta.strftime("%Y-%m-%d %H:%M") if shipment.eta else None,"pod_status":shipment.pod_status,"value":float(shipment.value)}
     if request.method == "GET":
-        routes=list(DeliveryRoute.objects.order_by("-created_at")[:100]); shipments=list(Shipment.objects.order_by("-created_at")[:100])
+        routes=list(DeliveryRoute.objects.filter(organization=organization).order_by("-created_at")[:100]); shipments=list(Shipment.objects.filter(organization=organization).order_by("-created_at")[:100])
         return JsonResponse({"summary":{"planned":sum(1 for x in routes if x.status=="planned"),"in_transit":sum(1 for x in shipments if x.status=="in_transit"),"delivered_today":sum(1 for x in shipments if x.status=="delivered" and x.proof_at and x.proof_at.date()==timezone.localdate()),"exceptions":sum(1 for x in shipments if x.status=="exception")},"routes":[route_item(x) for x in routes],"shipments":[shipment_item(x) for x in shipments],"exceptions":[]})
     data=parse_body(request) or {}; action=str(data.get("action","route"))
     try:
         if action == "route":
-            route=DeliveryRoute.objects.create(route_no=f"RT-{timezone.now():%y%m%d}-{uuid4().hex[:4].upper()}",driver=str(data.get("driver","")),vehicle=str(data.get("vehicle","")),stops=max(1,int(data.get("stops",1) or 1)),eta=str(data.get("eta","15:30")),cost=float(data.get("cost",0) or 0),created_by=request.api_user)
+            route=DeliveryRoute.objects.create(organization=organization,route_no=f"RT-{timezone.now():%y%m%d}-{uuid4().hex[:4].upper()}",driver=str(data.get("driver","")),vehicle=str(data.get("vehicle","")),stops=max(1,int(data.get("stops",1) or 1)),eta=str(data.get("eta","15:30")),cost=float(data.get("cost",0) or 0),created_by=request.api_user)
             item=route_item(route)
         else:
-            shipment=Shipment.objects.get(id=int(data["id"]))
+            shipment=Shipment.objects.get(id=int(data["id"]),organization=organization)
             if action == "status": shipment.status=str(data.get("status",shipment.status))
             elif action == "proof": shipment.pod_status="verified"; shipment.proof_at=timezone.now(); shipment.status="delivered"
             else: raise ValueError("Unknown delivery action")

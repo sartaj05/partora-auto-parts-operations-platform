@@ -608,3 +608,51 @@ class Shipment(models.Model):
     value = models.DecimalField(max_digits=14, decimal_places=2, default=0)
     proof_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
+
+
+class Organization(models.Model):
+    PLAN_CHOICES = [("starter", "Starter"), ("growth", "Growth"), ("scale", "Scale")]
+    name = models.CharField(max_length=160)
+    slug = models.SlugField(max_length=80, unique=True)
+    plan = models.CharField(max_length=20, choices=PLAN_CHOICES, default="growth")
+    active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return self.name
+
+
+class OrganizationMembership(models.Model):
+    ROLE_CHOICES = Profile.ROLE_CHOICES
+    organization = models.ForeignKey(Organization, on_delete=models.CASCADE, related_name="memberships")
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="organization_memberships")
+    role = models.CharField(max_length=20, choices=ROLE_CHOICES, default="sales")
+    approval_limit = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=["organization", "user"], name="unique_organization_membership")]
+
+
+class OrganizationInvitation(models.Model):
+    STATUS_CHOICES = [("pending", "Pending"), ("accepted", "Accepted"), ("expired", "Expired"), ("cancelled", "Cancelled")]
+    organization = models.ForeignKey(Organization, on_delete=models.CASCADE, related_name="invitations")
+    email = models.EmailField()
+    role = models.CharField(max_length=20, choices=Profile.ROLE_CHOICES, default="store")
+    branch = models.ForeignKey(Warehouse, on_delete=models.SET_NULL, null=True, blank=True, related_name="organization_invitations")
+    approval_limit = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    token = models.CharField(max_length=80, unique=True)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="pending")
+    invited_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name="organization_invitations_sent")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+
+# Tenant ownership is added to the existing branch and enterprise records in
+# one place so every new enterprise feature has the same isolation boundary.
+for _tenant_model in [
+    Warehouse, IntegrationConnection, WebhookSubscription, IntegrationLog,
+    PwaDevice, SyncConflict, AutomationRule, AutomationRun, FleetVehicle, FleetWorkOrder,
+    SupportTicket, SupportCommunication, DeliveryRoute, Shipment,
+]:
+    _tenant_model.add_to_class("organization", models.ForeignKey(Organization, on_delete=models.CASCADE, null=True, blank=True, related_name=f"{_tenant_model.__name__.lower()}_records"))

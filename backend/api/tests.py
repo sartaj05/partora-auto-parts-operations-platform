@@ -4,7 +4,7 @@ from django.contrib.auth.models import User
 from django.test import TestCase
 
 from .auth import issue_token
-from .models import AutomationRule, DemandHistory, FleetVehicle, GoodsReceipt, IntegrationConnection, Product, Profile, PurchaseOrder, PurchasePlan, RFQ, RFQOffer, SupportTicket, Supplier, SupplierContract, SupplierInvoice, VehicleFitment
+from .models import AutomationRule, DemandHistory, FleetVehicle, GoodsReceipt, IntegrationConnection, Organization, OrganizationInvitation, OrganizationMembership, Product, Profile, PurchaseOrder, PurchasePlan, RFQ, RFQOffer, SupportTicket, Supplier, SupplierContract, SupplierInvoice, VehicleFitment
 
 
 class DemandPlanningApiTests(TestCase):
@@ -279,3 +279,31 @@ class DemandPlanningApiTests(TestCase):
         )
         self.assertEqual(rule_response.status_code, 201)
         self.assertTrue(AutomationRule.objects.filter(name="Test rule").exists())
+
+    def test_tenant_scope_and_invitation_are_persistent(self):
+        tenant_response = self.client.get("/api/tenancy/", **self.auth_headers(self.manager))
+        self.assertEqual(tenant_response.status_code, 200)
+        organization = Organization.objects.get(slug="default")
+
+        invite_response = self.client.post(
+            "/api/tenancy/",
+            data={"action": "invite", "email": "newuser@example.com", "role": "store", "approval_limit": 25000},
+            content_type="application/json",
+            **self.auth_headers(self.manager),
+        )
+        self.assertEqual(invite_response.status_code, 201)
+        self.assertTrue(OrganizationInvitation.objects.filter(organization=organization, email="newuser@example.com").exists())
+
+        other = Organization.objects.create(name="Other Org", slug="other-org")
+        other_user = User.objects.create_user("other@example.com", "other@example.com", "demo123")
+        other_user.profile.role = "manager"
+        other_user.profile.save(update_fields=["role"])
+        OrganizationMembership.objects.create(organization=other, user=other_user, role="manager")
+        self.client.post(
+            "/api/fleet/",
+            data={"action": "vehicle", "registration": "OTHER 0001", "customer": "Other Customer", "make": "Other", "model": "Van", "next_service": "2030-01-01"},
+            content_type="application/json",
+            **self.auth_headers(other_user),
+        )
+        visible = self.client.get("/api/fleet/", **self.auth_headers(self.manager)).json()["vehicles"]
+        self.assertFalse(any(item["registration"] == "OTHER 0001" for item in visible))

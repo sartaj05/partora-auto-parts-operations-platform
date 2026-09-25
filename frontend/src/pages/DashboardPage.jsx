@@ -55,6 +55,24 @@ function money(n) { return new Intl.NumberFormat('en-IN', { style:'currency', cu
 function niceRole(role){ return role ? role[0].toUpperCase()+role.slice(1) : '' }
 function dateAfter(days){ const d=new Date(); d.setDate(d.getDate()+days); return d.toISOString().slice(0,10) }
 
+function ScopeSelector(){
+  const { user, modules } = useAuth()
+  const [tenant,setTenant]=useState(null)
+  const [selected,setSelected]=useState(()=>localStorage.getItem('partora_branch') || '')
+  useEffect(()=>{
+    if(!modules.includes('tenancy')) return
+    loadEndpoint('/tenancy/',user.role).then(r=>setTenant(r.data)).catch(()=>setTenant(null))
+  },[modules,user.role])
+  if(!tenant) return null
+  function change(value){
+    if(value) localStorage.setItem('partora_branch',value)
+    else localStorage.removeItem('partora_branch')
+    setSelected(value)
+    window.location.reload()
+  }
+  return <div className="scope-selector"><small>{tenant.organization?.name || 'Organization'}</small><select value={selected} onChange={e=>change(e.target.value)} aria-label="Branch scope"><option value="">All branches</option>{tenant.branches.map(branch=><option key={branch.code} value={branch.code}>{branch.code} · {branch.name}</option>)}</select></div>
+}
+
 function Shell({ children }) {
   const { user, modules, demoMode, logout } = useAuth()
   const location = useLocation()
@@ -63,6 +81,7 @@ function Shell({ children }) {
       <aside className="sidebar">
         <Link className="brand app-brand" to="/"><span className="brand-mark">P</span><span>Partora</span></Link>
         <div className="workspace-tag">Operations workspace</div>
+        <ScopeSelector />
         <nav className="app-nav">
           {nav.filter(([key]) => modules.includes(key)).map(([key,path,label,icon]) => {
             const active = path === '/app' ? location.pathname === '/app' : location.pathname.startsWith(path)

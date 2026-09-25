@@ -20,6 +20,27 @@ def get_user_from_request(request):
     except Exception:
         return None
 
+
+def get_current_organization(user):
+    """Return the user's active organization, with a safe legacy fallback."""
+    from .models import Organization, OrganizationMembership
+
+    membership = user.organization_memberships.filter(active=True, organization__active=True).select_related("organization").order_by("organization_id").first()
+    if membership:
+        return membership.organization
+    organization, _ = Organization.objects.get_or_create(slug="default", defaults={"name": "Partora Auto Parts India", "plan": "growth"})
+    OrganizationMembership.objects.get_or_create(organization=organization, user=user, defaults={"role": user.profile.role, "approval_limit": 500000 if user.profile.role == "admin" else 150000})
+    return organization
+
+
+def get_current_branch(request, organization):
+    from .models import Warehouse
+
+    branch_code = request.headers.get("X-Partora-Branch", "").strip().upper()
+    if not branch_code:
+        return None
+    return Warehouse.objects.filter(organization=organization, code=branch_code, active=True).first()
+
 def api_login_required(view):
     @wraps(view)
     def wrapped(request, *args, **kwargs):
@@ -37,6 +58,8 @@ def roles_allowed(*roles):
         def wrapped(request, *args, **kwargs):
             if request.api_user.profile.role not in roles:
                 return JsonResponse({"detail": "You do not have access to this module"}, status=403)
+            request.organization = get_current_organization(request.api_user)
+            request.branch = get_current_branch(request, request.organization)
             return view(request, *args, **kwargs)
         return wrapped
     return decorator

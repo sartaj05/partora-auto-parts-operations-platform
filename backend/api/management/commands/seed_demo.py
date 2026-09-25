@@ -8,7 +8,7 @@ from api.models import (
     StockTransfer, Supplier, SupplierContract, VehicleFitment, Warehouse, WarehouseStock,
     IntegrationConnection, WebhookSubscription, PwaDevice, SyncConflict, AutomationRule,
     AutomationRun, FleetVehicle, FleetWorkOrder, SupportTicket, SupportCommunication,
-    DeliveryRoute, Shipment,
+    DeliveryRoute, Shipment, Organization, OrganizationMembership,
 )
 
 USERS = [
@@ -44,6 +44,10 @@ class Command(BaseCommand):
             profile.role = role
             profile.save()
             users[role] = user
+
+        organization, _ = Organization.objects.update_or_create(slug="partora", defaults={"name": "Partora Auto Parts India", "plan": "growth", "active": True})
+        for role, user in users.items():
+            OrganizationMembership.objects.update_or_create(organization=organization, user=user, defaults={"role": role, "approval_limit": 500000 if role == "admin" else 150000, "active": True})
 
         supplier_rows = [
             ("TorqueLine Components", "Neha Rao", "sales@torqueline.demo", "+91 98100 21001", 3, 4.8),
@@ -120,9 +124,9 @@ class Command(BaseCommand):
         ]:
             PriceRule.objects.update_or_create(name=name, defaults={"customer_type": kind, "min_qty": min_qty, "discount_percent": discount, "active": True})
 
-        main, _ = Warehouse.objects.update_or_create(code="DEL-MAIN", defaults={"name": "Delhi Main Warehouse", "address": "Okhla Industrial Area, Delhi", "active": True})
-        gur, _ = Warehouse.objects.update_or_create(code="GUR-SAT", defaults={"name": "Gurugram Satellite Store", "address": "Udyog Vihar, Gurugram", "active": True})
-        noi, _ = Warehouse.objects.update_or_create(code="NOI-NTH", defaults={"name": "Noida North Store", "address": "Sector 63, Noida", "active": True})
+        main, _ = Warehouse.objects.update_or_create(code="DEL-MAIN", defaults={"organization": organization, "name": "Delhi Main Warehouse", "address": "Okhla Industrial Area, Delhi", "active": True})
+        gur, _ = Warehouse.objects.update_or_create(code="GUR-SAT", defaults={"organization": organization, "name": "Gurugram Satellite Store", "address": "Udyog Vihar, Gurugram", "active": True})
+        noi, _ = Warehouse.objects.update_or_create(code="NOI-NTH", defaults={"organization": organization, "name": "Noida North Store", "address": "Sector 63, Noida", "active": True})
         for idx, product in enumerate(products.values()):
             total = max(product.stock_qty, 0)
             main_qty = max(0, total - (idx % 3) * 2)
@@ -163,13 +167,17 @@ class Command(BaseCommand):
             ("Shiprocket", "shipping", "attention", 18),
             ("Razorpay", "payments", "available", 0),
         ]:
-            connection, _ = IntegrationConnection.objects.update_or_create(name=name, defaults={"integration_type": kind, "status": status, "last_sync": timezone.now() if status != "available" else None, "records": records, "created_by": users["admin"]})
+            connection, _ = IntegrationConnection.objects.update_or_create(name=name, defaults={"organization": organization, "integration_type": kind, "status": status, "last_sync": timezone.now() if status != "available" else None, "records": records, "created_by": users["admin"]})
             integrations[name] = connection
-        WebhookSubscription.objects.get_or_create(event="invoice.paid", target="https://client.example/webhooks/partora", defaults={"connection": integrations["Zoho Books"], "deliveries": 42, "created_by": users["admin"]})
+        webhook, _ = WebhookSubscription.objects.get_or_create(event="invoice.paid", target="https://client.example/webhooks/partora", defaults={"organization": organization, "connection": integrations["Zoho Books"], "deliveries": 42, "created_by": users["admin"]})
+        if webhook.organization_id != organization.id:
+            webhook.organization=organization; webhook.connection=integrations["Zoho Books"]; webhook.save(update_fields=["organization","connection"])
 
-        device, _ = PwaDevice.objects.update_or_create(name="Kabir Store · Android", defaults={"warehouse": main, "status": "online", "app_version": "1.4.0", "last_seen": timezone.now()})
-        tablet, _ = PwaDevice.objects.update_or_create(name="Receiving Tablet · iPad", defaults={"warehouse": gur, "status": "offline", "app_version": "1.3.8", "last_seen": timezone.now() - timedelta(hours=1)})
-        SyncConflict.objects.get_or_create(device=device, reference="CNT-260923-1A90", field="counted_qty", defaults={"local_value": "3", "server_value": "4", "status": "needs_review"})
+        device, _ = PwaDevice.objects.update_or_create(name="Kabir Store · Android", defaults={"organization": organization, "warehouse": main, "status": "online", "app_version": "1.4.0", "last_seen": timezone.now()})
+        tablet, _ = PwaDevice.objects.update_or_create(name="Receiving Tablet · iPad", defaults={"organization": organization, "warehouse": gur, "status": "offline", "app_version": "1.3.8", "last_seen": timezone.now() - timedelta(hours=1)})
+        conflict, _ = SyncConflict.objects.get_or_create(device=device, reference="CNT-260923-1A90", field="counted_qty", defaults={"organization": organization, "local_value": "3", "server_value": "4", "status": "needs_review"})
+        if conflict.organization_id != organization.id:
+            conflict.organization=organization; conflict.save(update_fields=["organization"])
 
         rules = [
             ("Low-stock manager alert", "stock.below_reorder", "Send notification", "active", 18),
@@ -177,8 +185,8 @@ class Command(BaseCommand):
             ("Contract renewal reminder", "contract.expiring_30d", "Create review task", "paused", 2),
         ]
         for name, trigger, action, status, runs in rules:
-            rule, _ = AutomationRule.objects.update_or_create(name=name, defaults={"trigger": trigger, "action": action, "status": status, "runs": runs, "last_run": timezone.now() if runs else None, "created_by": users["manager"]})
-            if runs and not rule.run_history.exists(): AutomationRun.objects.create(rule=rule, result="success", detail="Seeded demo execution")
+            rule, _ = AutomationRule.objects.update_or_create(name=name, defaults={"organization": organization, "trigger": trigger, "action": action, "status": status, "runs": runs, "last_run": timezone.now() if runs else None, "created_by": users["manager"]})
+            if runs and not rule.run_history.exists(): AutomationRun.objects.create(organization=organization, rule=rule, result="success", detail="Seeded demo execution")
 
         fleet_rows = [
             ("DL 01 AB 2488", "Rapid Fleet Care", "Tata", "Ace Gold", 2022, 68240, date.today() + timedelta(days=11), "due_soon"),
@@ -187,13 +195,13 @@ class Command(BaseCommand):
         ]
         fleet = {}
         for registration, customer, make, model, year, mileage, next_service, status in fleet_rows:
-            fleet[registration], _ = FleetVehicle.objects.update_or_create(registration=registration, defaults={"customer": customer, "make": make, "model": model, "year": year, "mileage": mileage, "next_service": next_service, "status": status})
+            fleet[registration], _ = FleetVehicle.objects.update_or_create(registration=registration, defaults={"organization": organization, "customer": customer, "make": make, "model": model, "year": year, "mileage": mileage, "next_service": next_service, "status": status})
         work_orders = [
             ("WO-260923-018", "DL 01 AB 2488", "Ravi Kumar", "scheduled", date.today() + timedelta(days=11), 4850, 1800, "Replace brake pads and oil filter"),
             ("WO-260921-014", "DL 04 MK 7761", "Sana Iqbal", "in_progress", date.today() + timedelta(days=3), 7200, 2200, "Full service and headlamp diagnosis"),
         ]
         for order_no, registration, technician, status, due_date, parts_value, labor_value, notes in work_orders:
-            FleetWorkOrder.objects.update_or_create(order_no=order_no, defaults={"vehicle": fleet[registration], "registration": registration, "customer": fleet[registration].customer, "technician": technician, "status": status, "due_date": due_date, "parts_value": parts_value, "labor_value": labor_value, "notes": notes, "created_by": users["store"]})
+            FleetWorkOrder.objects.update_or_create(order_no=order_no, defaults={"organization": organization, "vehicle": fleet[registration], "registration": registration, "customer": fleet[registration].customer, "technician": technician, "status": status, "due_date": due_date, "parts_value": parts_value, "labor_value": labor_value, "notes": notes, "created_by": users["store"]})
 
         ticket_rows = [
             ("CS-260923-104", "Northline Repairs", "Brake pad fitment question", "dealer_portal", "high", "open", "Meera Manager", "Customer shared vehicle registration and installation photos.", 3),
@@ -201,11 +209,11 @@ class Command(BaseCommand):
             ("CS-260922-098", "Metro Garage", "Request repeat quotation", "email", "normal", "pending_customer", "Kabir Store", "Quote sent for confirmation.", 2),
         ]
         for ticket_no, customer, subject, channel, priority, status, assignee, message, messages in ticket_rows:
-            ticket, created = SupportTicket.objects.update_or_create(ticket_no=ticket_no, defaults={"customer": customer, "subject": subject, "channel": channel, "priority": priority, "status": status, "assignee": assignee, "sla_due": timezone.now() + timedelta(hours=6), "last_message": message, "messages": messages, "created_by": users["manager"]})
-            if created: SupportCommunication.objects.create(ticket=ticket, actor=assignee, channel=channel, message=message)
+            ticket, created = SupportTicket.objects.update_or_create(ticket_no=ticket_no, defaults={"organization": organization, "customer": customer, "subject": subject, "channel": channel, "priority": priority, "status": status, "assignee": assignee, "sla_due": timezone.now() + timedelta(hours=6), "last_message": message, "messages": messages, "created_by": users["manager"]})
+            if created: SupportCommunication.objects.create(organization=organization, ticket=ticket, actor=assignee, channel=channel, message=message)
 
-        route, _ = DeliveryRoute.objects.update_or_create(route_no="RT-260923-04", defaults={"driver": "Sanjay Mehta", "vehicle": "DL 01 AB 2488", "stops": 6, "completed": 3, "eta": "14:30", "status": "in_transit", "cost": 1850, "created_by": users["store"]})
-        Shipment.objects.update_or_create(shipment_no="SHP-88421", defaults={"route": route, "customer": "Northline Repairs", "order_no": "SO-260921-41BC", "driver": "Sanjay Mehta", "status": "in_transit", "eta": timezone.now() + timedelta(hours=3), "pod_status": "pending", "value": 32600})
-        Shipment.objects.update_or_create(shipment_no="SHP-88418", defaults={"route": route, "customer": "Metro Garage", "order_no": "SO-260920-18DA", "driver": "Pooja Shah", "status": "delivered", "eta": timezone.now() - timedelta(hours=1), "pod_status": "verified", "value": 18450, "proof_at": timezone.now() - timedelta(hours=1)})
+        route, _ = DeliveryRoute.objects.update_or_create(route_no="RT-260923-04", defaults={"organization": organization, "driver": "Sanjay Mehta", "vehicle": "DL 01 AB 2488", "stops": 6, "completed": 3, "eta": "14:30", "status": "in_transit", "cost": 1850, "created_by": users["store"]})
+        Shipment.objects.update_or_create(shipment_no="SHP-88421", defaults={"organization": organization, "route": route, "customer": "Northline Repairs", "order_no": "SO-260921-41BC", "driver": "Sanjay Mehta", "status": "in_transit", "eta": timezone.now() + timedelta(hours=3), "pod_status": "pending", "value": 32600})
+        Shipment.objects.update_or_create(shipment_no="SHP-88418", defaults={"organization": organization, "route": route, "customer": "Metro Garage", "order_no": "SO-260920-18DA", "driver": "Pooja Shah", "status": "delivered", "eta": timezone.now() - timedelta(hours=1), "pod_status": "verified", "value": 18450, "proof_at": timezone.now() - timedelta(hours=1)})
 
         self.stdout.write(self.style.SUCCESS("Partora full demo data is ready. Password for all demo users: demo123"))
