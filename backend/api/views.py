@@ -193,7 +193,10 @@ def quotations_view(request):
 @roles_allowed("admin", "manager", "store")
 def stock_view(request):
     if request.method == "GET":
-        movements = StockLedgerEntry.objects.select_related("product").filter(organization=request.organization).order_by("-created_at")[:25]
+        movement_query = StockLedgerEntry.objects.select_related("product").filter(organization=request.organization)
+        if request.branch:
+            movement_query = movement_query.filter(warehouse=request.branch)
+        movements = movement_query.order_by("-created_at")[:25]
         return JsonResponse({"items": [{
             "id": m.id, "sku": m.product.sku, "product": m.product.name, "type": m.movement_type,
             "quantity": abs(m.quantity), "reference": m.reference, "created_at": m.created_at.isoformat(),
@@ -411,6 +414,8 @@ def mobile_warehouse_view(request):
     if request.method == "GET":
         device_key=request.GET.get("device_key") or f"user:{request.api_user.id}"
         device=PwaDevice.objects.filter(organization=organization,device_key=device_key).first()
+        if device and request.branch and device.warehouse_id not in {None, request.branch.id}:
+            return JsonResponse({"detail":"Device belongs to another branch"}, status=403)
         tasks=[]
         if device:
             for task in device.tasks.select_related("product").order_by("-created_at")[:100]:
@@ -420,8 +425,12 @@ def mobile_warehouse_view(request):
     data=parse_body(request) or {}; action=str(data.get("action", "scan"))
     try:
         device_key=str(data.get("device_key") or f"user:{request.api_user.id}")[:120]
-        device,created=PwaDevice.objects.get_or_create(organization=organization,device_key=device_key,defaults={"name":str(data.get("device_name") or device_key)[:140],"app_version":str(data.get("app_version") or "")[:30],"status":"online","last_seen":timezone.now()})
-        device.status="online"; device.last_seen=timezone.now(); device.save(update_fields=["status","last_seen"])
+        device,created=PwaDevice.objects.get_or_create(organization=organization,device_key=device_key,defaults={"name":str(data.get("device_name") or device_key)[:140],"app_version":str(data.get("app_version") or "")[:30],"status":"online","last_seen":timezone.now(),"warehouse":request.branch})
+        if request.branch and device.warehouse_id not in {None, request.branch.id}:
+            return JsonResponse({"detail":"Device belongs to another branch"}, status=403)
+        if request.branch and device.warehouse_id is None:
+            device.warehouse=request.branch
+        device.status="online"; device.last_seen=timezone.now(); device.save(update_fields=["status","last_seen","warehouse"])
         if action == "scan":
             product=Product.objects.get(sku=str(data.get("sku", "")).strip().upper())
             idem=str(data.get("idempotency_key") or f"{device_key}:{data.get('reference') or uuid4().hex}")[:120]
@@ -609,7 +618,7 @@ def tenancy_view(request):
     organization=request.organization
     if request.method == "GET":
         branches=[{"id":w.id,"code":w.code,"name":w.name,"users":w.organization_invitations.filter(status="accepted").count(),"status":"active"} for w in Warehouse.objects.filter(active=True,organization=organization).order_by("code")]
-        users=[{"id":m.user_id,"name":m.user.get_full_name() or m.user.username,"email":m.user.email,"role":m.role,"branch":"All branches","approval_limit":float(m.approval_limit),"status":"active"} for m in organization.memberships.select_related("user").filter(active=True).order_by("user__first_name")]
+        users=[{"id":m.user_id,"name":m.user.get_full_name() or m.user.username,"email":m.user.email,"role":m.role,"branch":m.primary_branch.code if m.primary_branch and not m.all_branches else "All branches","branch_id":m.primary_branch_id,"all_branches":m.all_branches,"approval_limit":float(m.approval_limit),"status":"active"} for m in organization.memberships.select_related("user","primary_branch").filter(active=True).order_by("user__first_name")]
         users.extend({"id":invite.id,"name":invite.email,"email":invite.email,"role":invite.role,"branch":invite.branch.code if invite.branch else "All branches","approval_limit":float(invite.approval_limit),"status":"invited"} for invite in organization.invitations.select_related("branch").filter(status="pending").order_by("-created_at"))
         return JsonResponse({"organization":{"id":organization.id,"name":organization.name,"plan":organization.plan.title(),"branches":len(branches),"users":len(users),"monthly_events":AuditLog.objects.filter(user__organization_memberships__organization=organization).count()},"branches":branches,"users":users})
     data=parse_body(request) or {}; action=str(data.get("action","invite"))
@@ -620,8 +629,12 @@ def tenancy_view(request):
             role=str(data.get("role", "")).strip()
             valid_roles={choice[0] for choice in OrganizationMembership.ROLE_CHOICES}
             if role not in valid_roles: raise ValueError("Invalid organization role")
-            membership.role=role; membership.approval_limit=float(data.get("approval_limit", membership.approval_limit) or 0); membership.save(update_fields=["role","approval_limit"])
-            item={"id":membership.user_id,"name":membership.user.get_full_name() or membership.user.username,"email":membership.user.email,"role":membership.role,"branch":"All branches","approval_limit":float(membership.approval_limit),"status":"active"}
+            branch_code=str(data.get("branch", "")).strip().upper()
+            branch=Warehouse.objects.filter(organization=organization, code=branch_code, active=True).first() if branch_code else None
+            all_branches=not bool(branch_code) or bool(data.get("all_branches"))
+            if branch_code and not branch: raise ValueError("Unknown branch")
+            membership.role=role; membership.approval_limit=float(data.get("approval_limit", membership.approval_limit) or 0); membership.primary_branch=None if all_branches else branch; membership.all_branches=all_branches; membership.save(update_fields=["role","approval_limit","primary_branch","all_branches"])
+            item={"id":membership.user_id,"name":membership.user.get_full_name() or membership.user.username,"email":membership.user.email,"role":membership.role,"branch":branch.code if branch and not all_branches else "All branches","branch_id":branch.id if branch and not all_branches else None,"all_branches":all_branches,"approval_limit":float(membership.approval_limit),"status":"active"}
         except Exception as exc: return JsonResponse({"detail":f"Could not update role: {exc}"},status=400)
     elif action=="branch":
         try: branch=Warehouse.objects.create(code=str(data["code"]).strip().upper(),name=str(data["name"]).strip(),address=str(data.get("address","")),organization=organization); item={"id":branch.id,"code":branch.code,"name":branch.name,"users":0,"status":"active"}
@@ -854,11 +867,17 @@ def predictive_fleet_view(request):
 @roles_allowed("admin", "manager", "store")
 def warehouses_view(request):
     if request.method == "GET":
-        warehouses=Warehouse.objects.filter(active=True,organization=request.organization).order_by("code")
+        warehouse_query=Warehouse.objects.filter(active=True,organization=request.organization)
+        if request.branch:
+            warehouse_query=warehouse_query.filter(id=request.branch.id)
+        warehouses=warehouse_query.order_by("code")
         wh_items=[]
         for wh in warehouses:
             wh_items.append({"id":wh.id,"code":wh.code,"name":wh.name,"address":wh.address,"sku_count":wh.stocks.count(),"units":wh.stocks.aggregate(total=Sum("quantity"))["total"] or 0})
-        transfers=[{"id":t.id,"reference":t.reference,"from_warehouse":t.from_warehouse.code,"to_warehouse":t.to_warehouse.code,"sku":t.product.sku,"product":t.product.name,"quantity":t.quantity,"status":t.status,"created_at":t.created_at.isoformat()} for t in StockTransfer.objects.select_related("from_warehouse","to_warehouse","product").filter(from_warehouse__organization=request.organization).order_by("-created_at")[:40]]
+        transfer_query=StockTransfer.objects.select_related("from_warehouse","to_warehouse","product").filter(from_warehouse__organization=request.organization)
+        if request.branch:
+            transfer_query=transfer_query.filter(Q(from_warehouse=request.branch)|Q(to_warehouse=request.branch))
+        transfers=[{"id":t.id,"reference":t.reference,"from_warehouse":t.from_warehouse.code,"to_warehouse":t.to_warehouse.code,"sku":t.product.sku,"product":t.product.name,"quantity":t.quantity,"status":t.status,"created_at":t.created_at.isoformat()} for t in transfer_query.order_by("-created_at")[:40]]
         return JsonResponse({"warehouses":wh_items,"transfers":transfers})
     if request.method == "POST":
         data=parse_body(request) or {}; action=str(data.get("action","transfer"))
@@ -871,6 +890,7 @@ def warehouses_view(request):
         try:
             with transaction.atomic():
                 source=Warehouse.objects.select_for_update().get(code=str(data["from_warehouse"]).strip().upper(),organization=request.organization); target=Warehouse.objects.select_for_update().get(code=str(data["to_warehouse"]).strip().upper(),organization=request.organization); product=Product.objects.select_for_update().get(sku=str(data["sku"]).strip().upper()); qty=max(1,int(data.get("quantity",1)))
+                if request.branch and source.id != request.branch.id and target.id != request.branch.id: raise ValueError("Transfer must include your assigned branch")
                 if source.id == target.id: raise ValueError("Source and destination must differ")
                 source_stock,_=WarehouseStock.objects.get_or_create(warehouse=source,product=product,defaults={"quantity":0}); target_stock,_=WarehouseStock.objects.get_or_create(warehouse=target,product=product,defaults={"quantity":0})
                 source_stock=WarehouseStock.objects.select_for_update().get(id=source_stock.id); target_stock=WarehouseStock.objects.select_for_update().get(id=target_stock.id)

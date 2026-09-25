@@ -732,6 +732,8 @@ class OrganizationMembership(models.Model):
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="organization_memberships")
     role = models.CharField(max_length=20, choices=ROLE_CHOICES, default="sales")
     approval_limit = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    primary_branch = models.ForeignKey(Warehouse, on_delete=models.SET_NULL, null=True, blank=True, related_name="member_scopes")
+    all_branches = models.BooleanField(default=True)
     active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
 

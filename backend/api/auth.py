@@ -87,10 +87,19 @@ def get_current_organization(user):
 def get_current_branch(request, organization):
     from .models import Warehouse
 
+    membership = request.api_user.organization_memberships.filter(organization=organization, active=True).first()
+    if membership and not membership.all_branches and membership.primary_branch_id:
+        restricted_branch = membership.primary_branch
+    else:
+        restricted_branch = None
+
     branch_code = request.headers.get("X-Partora-Branch", "").strip().upper()
     if not branch_code:
+        return restricted_branch
+    branch = Warehouse.objects.filter(organization=organization, code=branch_code, active=True).first()
+    if restricted_branch and branch and branch.id != restricted_branch.id:
         return None
-    return Warehouse.objects.filter(organization=organization, code=branch_code, active=True).first()
+    return branch
 
 
 def get_effective_role(user, organization=None):
@@ -118,6 +127,8 @@ def roles_allowed(*roles):
             if request.effective_role not in roles:
                 return JsonResponse({"detail": "You do not have access to this module"}, status=403)
             request.branch = get_current_branch(request, request.organization)
+            if request.headers.get("X-Partora-Branch", "").strip() and request.branch is None:
+                return JsonResponse({"detail": "You do not have access to this branch"}, status=403)
             return view(request, *args, **kwargs)
         return wrapped
     return decorator
@@ -133,6 +144,8 @@ def permission_required(module, action):
             if not has_permission(request.api_user, module, action, request.organization):
                 return JsonResponse({"detail": f"Permission required: {module}.{action}"}, status=403)
             request.branch = get_current_branch(request, request.organization)
+            if request.headers.get("X-Partora-Branch", "").strip() and request.branch is None:
+                return JsonResponse({"detail": "You do not have access to this branch"}, status=403)
             return view(request, *args, **kwargs)
         return wrapped
     return decorator

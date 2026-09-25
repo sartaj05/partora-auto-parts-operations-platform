@@ -5,7 +5,7 @@ from django.test import TestCase
 from django.utils import timezone
 
 from .auth import issue_token
-from .models import AutomationRule, Customer, CustomerPortalToken, DemandHistory, FinanceTaxRule, FleetVehicle, GoodsReceipt, IntegrationConnection, Invoice, MobileTask, Organization, OrganizationInvitation, OrganizationMembership, Payment, PermissionDefinition, PortalAccessLog, Product, Profile, PurchaseOrder, PurchaseOrderStatusEvent, PurchasePlan, PwaDevice, QuotationItem, Quotation, RFQ, RFQOffer, RolePermission, SalesOrder, SalesOrderItem, StockLedgerEntry, StockReservation, SupportTicket, Supplier, SupplierContract, SupplierInvoice, SyncConflict, VehicleFitment, WebhookDelivery, WebhookSubscription
+from .models import AutomationRule, Customer, CustomerPortalToken, DemandHistory, FinanceTaxRule, FleetVehicle, GoodsReceipt, IntegrationConnection, Invoice, MobileTask, Organization, OrganizationInvitation, OrganizationMembership, Payment, PermissionDefinition, PortalAccessLog, Product, Profile, PurchaseOrder, PurchaseOrderStatusEvent, PurchasePlan, PwaDevice, QuotationItem, Quotation, RFQ, RFQOffer, RolePermission, SalesOrder, SalesOrderItem, StockLedgerEntry, StockReservation, SupportTicket, Supplier, SupplierContract, SupplierInvoice, SyncConflict, VehicleFitment, Warehouse, WebhookDelivery, WebhookSubscription
 
 
 class DemandPlanningApiTests(TestCase):
@@ -520,3 +520,18 @@ class DemandPlanningApiTests(TestCase):
         allowed = self.client.post("/api/permissions/", data={"action": "update", "role": "sales", "module": "finance", "permission": "export", "allowed": True}, content_type="application/json", **self.auth_headers(self.admin))
         self.assertEqual(allowed.status_code, 200)
         self.assertTrue(allowed.json()["item"]["allowed"])
+
+    def test_membership_branch_scope_is_enforced(self):
+        self.client.get("/api/warehouses/", **self.auth_headers(self.store))
+        organization = self.store.organization_memberships.first().organization
+        primary = Warehouse.objects.create(code="DEL-BRANCH", name="Delhi Branch", organization=organization)
+        other = Warehouse.objects.create(code="GUR-BRANCH", name="Gurugram Branch", organization=organization)
+        membership = self.store.organization_memberships.first()
+        membership.primary_branch = primary
+        membership.all_branches = False
+        membership.save(update_fields=["primary_branch", "all_branches"])
+        allowed = self.client.get("/api/warehouses/", HTTP_X_PARTORA_BRANCH="DEL-BRANCH", **self.auth_headers(self.store))
+        self.assertEqual(allowed.status_code, 200)
+        self.assertEqual([item["code"] for item in allowed.json()["warehouses"]], ["DEL-BRANCH"])
+        denied = self.client.get("/api/warehouses/", HTTP_X_PARTORA_BRANCH="GUR-BRANCH", **self.auth_headers(self.store))
+        self.assertEqual(denied.status_code, 403)
