@@ -13,6 +13,50 @@ ROLE_MODULES = {
     "store": ["dashboard", "inventory", "stock", "barcodes", "fitments", "purchase_orders", "receiving", "mobile_warehouse", "warehouses", "reorder", "fulfillment", "notifications", "returns", "inventory_control"],
 }
 
+PERMISSION_ACTIONS = ("view", "create", "edit", "approve", "export")
+
+
+def permission_defaults(role, module, action):
+    """Return the safe baseline used when a new permission has no override yet."""
+    if module not in ROLE_MODULES.get(role, []):
+        return False
+    if role == "admin":
+        return True
+    if action == "view":
+        return True
+    if action == "export":
+        return role == "manager"
+    if action == "approve":
+        return role == "manager"
+    if action in {"create", "edit"}:
+        return role in {"manager", "sales", "store"}
+    return False
+
+
+def get_permission_map(role):
+    from .models import PermissionDefinition, RolePermission
+
+    grants = {
+        permission.permission.module + ":" + permission.permission.action: permission.allowed
+        for permission in RolePermission.objects.filter(role=role).select_related("permission")
+    }
+    result = {}
+    for permission in PermissionDefinition.objects.all():
+        key = f"{permission.module}:{permission.action}"
+        result[key] = grants.get(key, permission_defaults(role, permission.module, permission.action))
+    return result
+
+
+def has_permission(user, module, action, organization=None):
+    role = get_effective_role(user, organization)
+    from .models import PermissionDefinition, RolePermission
+
+    permission = PermissionDefinition.objects.filter(module=module, action=action).first()
+    if not permission:
+        return permission_defaults(role, module, action)
+    grant = RolePermission.objects.filter(role=role, permission=permission).values_list("allowed", flat=True).first()
+    return permission_defaults(role, module, action) if grant is None else bool(grant)
+
 def issue_token(user):
     return signing.dumps({"uid": user.id}, salt=TOKEN_SALT, compress=True)
 
@@ -73,6 +117,21 @@ def roles_allowed(*roles):
             request.effective_role = get_effective_role(request.api_user, request.organization)
             if request.effective_role not in roles:
                 return JsonResponse({"detail": "You do not have access to this module"}, status=403)
+            request.branch = get_current_branch(request, request.organization)
+            return view(request, *args, **kwargs)
+        return wrapped
+    return decorator
+
+
+def permission_required(module, action):
+    def decorator(view):
+        @wraps(view)
+        @api_login_required
+        def wrapped(request, *args, **kwargs):
+            request.organization = get_current_organization(request.api_user)
+            request.effective_role = get_effective_role(request.api_user, request.organization)
+            if not has_permission(request.api_user, module, action, request.organization):
+                return JsonResponse({"detail": f"Permission required: {module}.{action}"}, status=403)
             request.branch = get_current_branch(request, request.organization)
             return view(request, *args, **kwargs)
         return wrapped

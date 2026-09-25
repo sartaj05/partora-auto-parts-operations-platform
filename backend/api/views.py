@@ -13,7 +13,7 @@ from django.db.models import Count, DecimalField, ExpressionWrapper, F, Max, Q, 
 from django.http import JsonResponse
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
-from .auth import ROLE_MODULES, api_login_required, get_current_organization, get_effective_role, issue_token, roles_allowed
+from .auth import ROLE_MODULES, api_login_required, get_current_organization, get_effective_role, get_permission_map, has_permission, issue_token, roles_allowed
 from .models import Product, Quotation, QuotationItem, StockMovement, Supplier, SupplierContract, VehicleFitment, PurchaseOrder, PurchaseOrderItem, PurchaseOrderStatusEvent, GoodsReceipt, GoodsReceiptLine, SupplierInvoice, Warehouse, WarehouseStock, StockTransfer, SalesOrder, SalesOrderItem, Invoice, Payment, FinanceTaxRule, ReturnRequest, InventoryCount, InventoryCountLine, ProductLot, SupplierPriceSnapshot, Customer, CustomerPortalToken, PortalAccessLog, PriceRule, Notification, ApprovalRequest, AuditLog, DemandHistory, PurchasePlan, RFQ, RFQOffer, IntegrationConnection, WebhookSubscription, IntegrationLog, WebhookDelivery, PwaDevice, SyncConflict, MobileTask, AutomationRule, AutomationRun, FleetVehicle, FleetWorkOrder, SupportTicket, SupportCommunication, DeliveryRoute, Shipment, Organization, OrganizationMembership, OrganizationInvitation, StockLedgerEntry, StockReservation
 from .serializers import product_dict, quotation_dict, supplier_dict
 
@@ -50,6 +50,7 @@ def login_view(request):
         "token": issue_token(user),
         "user": {"id": user.id, "name": user.get_full_name() or email.split("@")[0].title(), "email": user.email or email, "role": role},
         "modules": ROLE_MODULES[role],
+        "permissions": get_permission_map(role),
         "organization": {"id": organization.id, "name": organization.name, "plan": organization.plan},
     })
 
@@ -61,6 +62,7 @@ def me_view(request):
     return JsonResponse({
         "user": {"id": user.id, "name": user.get_full_name() or user.username, "email": user.email, "role": role},
         "modules": ROLE_MODULES[role],
+        "permissions": get_permission_map(role),
         "organization": {"id": organization.id, "name": organization.name, "plan": organization.plan},
     })
 

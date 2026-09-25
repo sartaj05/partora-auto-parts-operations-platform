@@ -5,7 +5,7 @@ from django.test import TestCase
 from django.utils import timezone
 
 from .auth import issue_token
-from .models import AutomationRule, Customer, CustomerPortalToken, DemandHistory, FinanceTaxRule, FleetVehicle, GoodsReceipt, IntegrationConnection, Invoice, MobileTask, Organization, OrganizationInvitation, OrganizationMembership, Payment, PortalAccessLog, Product, Profile, PurchaseOrder, PurchaseOrderStatusEvent, PurchasePlan, PwaDevice, QuotationItem, Quotation, RFQ, RFQOffer, SalesOrder, SalesOrderItem, StockLedgerEntry, StockReservation, SupportTicket, Supplier, SupplierContract, SupplierInvoice, SyncConflict, VehicleFitment, WebhookDelivery, WebhookSubscription
+from .models import AutomationRule, Customer, CustomerPortalToken, DemandHistory, FinanceTaxRule, FleetVehicle, GoodsReceipt, IntegrationConnection, Invoice, MobileTask, Organization, OrganizationInvitation, OrganizationMembership, Payment, PermissionDefinition, PortalAccessLog, Product, Profile, PurchaseOrder, PurchaseOrderStatusEvent, PurchasePlan, PwaDevice, QuotationItem, Quotation, RFQ, RFQOffer, RolePermission, SalesOrder, SalesOrderItem, StockLedgerEntry, StockReservation, SupportTicket, Supplier, SupplierContract, SupplierInvoice, SyncConflict, VehicleFitment, WebhookDelivery, WebhookSubscription
 
 
 class DemandPlanningApiTests(TestCase):
@@ -505,3 +505,11 @@ class DemandPlanningApiTests(TestCase):
         change = self.client.post("/api/tenancy/", data={"action": "role", "user_id": self.store.id, "role": "sales"}, content_type="application/json", **self.auth_headers(self.admin))
         self.assertEqual(change.status_code, 200)
         self.assertEqual(self.store.organization_memberships.first().role, "sales")
+
+    def test_permission_matrix_is_returned_and_can_be_overridden(self):
+        response = self.client.post("/api/auth/login/", data={"email": "manager@example.com", "password": "demo123"}, content_type="application/json")
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()["permissions"]["finance:approve"])
+        self.assertFalse(response.json()["permissions"]["security:view"])
+        self.assertTrue(PermissionDefinition.objects.filter(module="finance", action="approve").exists())
+        self.assertTrue(RolePermission.objects.filter(role="manager", permission__module="finance", allowed=True).exists())

@@ -15,6 +15,42 @@ class Profile(models.Model):
     def __str__(self):
         return f"{self.user.username} ({self.role})"
 
+
+class PermissionDefinition(models.Model):
+    ACTION_CHOICES = [
+        ("view", "View"),
+        ("create", "Create"),
+        ("edit", "Edit"),
+        ("approve", "Approve"),
+        ("export", "Export"),
+    ]
+    module = models.CharField(max_length=60)
+    action = models.CharField(max_length=20, choices=ACTION_CHOICES)
+    label = models.CharField(max_length=120)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=["module", "action"], name="unique_permission_definition")]
+        ordering = ["module", "action"]
+
+    def __str__(self):
+        return f"{self.module}:{self.action}"
+
+
+class RolePermission(models.Model):
+    ROLE_CHOICES = Profile.ROLE_CHOICES
+    role = models.CharField(max_length=20, choices=ROLE_CHOICES)
+    permission = models.ForeignKey(PermissionDefinition, on_delete=models.CASCADE, related_name="role_grants")
+    allowed = models.BooleanField(default=False)
+    updated_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name="permission_changes")
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=["role", "permission"], name="unique_role_permission")]
+
+    def __str__(self):
+        return f"{self.role}:{self.permission}={self.allowed}"
+
 class Supplier(models.Model):
     name = models.CharField(max_length=120)
     contact_name = models.CharField(max_length=120, blank=True)
