@@ -13,7 +13,7 @@ export function AuthProvider({ children }) {
 
   async function login(email, password) {
     const result = await apiLogin(email, password)
-    const next = { user: result.user, modules: result.modules, token: result.token, demoMode: result.demoMode }
+    const next = { user: result.user, modules: result.modules, token: result.token, demoMode: result.demoMode, organization: result.organization || null }
     localStorage.setItem(STORAGE, JSON.stringify(next))
     localStorage.setItem('partora_token', result.token)
     setSession(next)
@@ -29,6 +29,7 @@ export function AuthProvider({ children }) {
   const value = useMemo(() => ({
     user: session?.user || null,
     modules: session?.modules || [],
+    organization: session?.organization || null,
     demoMode: session?.demoMode || false,
     login,
     logout,

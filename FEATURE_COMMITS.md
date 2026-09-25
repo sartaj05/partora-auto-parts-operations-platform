@@ -15,6 +15,13 @@ The repository is intentionally built in reviewable feature commits. The ten req
 | `4a17a83` | KPI analytics, reporting visuals and CSV export |
 | `2cbe53f` | Notifications, approvals and audit trail |
 | `5f97ea6` | Complete demo seed data for all enhanced workflows |
+| `ac401f4` | Demand forecasting, safety stock and approval-ready purchase planning |
+| `1c0e0b7` | Supplier RFQ, quote scoring and manager-approved offer selection |
+| `a6fb9c1` | Goods receipt, damaged-stock handling and three-way supplier invoice matching |
+| `ce3163a` | Five-feature client showcase with VIN, dealer, warehouse, supplier and command-center demos |
+| `97dcc5d` | Mobile warehouse, notifications, copilot, finance and warranty intelligence suite |
+| `cbd2090` | Integrations hub, production PWA controls, multi-tenant permissions, workflow automation and fleet maintenance suite |
+| `21e7f3f` | Security and compliance, AI document processing, delivery/POD, partner API and predictive fleet suite |
 
 The earlier repository history is also preserved, including the original landing page, login, role-aware dashboard, Django API foundation, offline demo mode and deployment setup.
 

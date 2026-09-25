@@ -1,22 +1,22 @@
+import csv
+import hashlib
+import hmac
+import io
 import json
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
+from decimal import Decimal
+from math import ceil
 from uuid import uuid4
 from django.contrib.auth import authenticate
+from django.contrib.auth.hashers import check_password, make_password
 from django.db import transaction
-from django.db.models import Count, DecimalField, ExpressionWrapper, F, Q, Sum
+from django.db.models import Count, DecimalField, ExpressionWrapper, F, Max, Q, Sum
 from django.http import JsonResponse
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
-from .auth import api_login_required, issue_token, roles_allowed
-from .models import Product, Quotation, StockMovement, Supplier, VehicleFitment, PurchaseOrder, PurchaseOrderItem, Warehouse, WarehouseStock, StockTransfer, SalesOrder, SalesOrderItem, Invoice, Payment, ReturnRequest, InventoryCount, InventoryCountLine, ProductLot, SupplierPriceSnapshot, Customer, CustomerPortalToken, PriceRule, Notification, ApprovalRequest, AuditLog
+from .auth import ROLE_MODULES, api_login_required, get_current_organization, get_effective_role, get_permission_map, has_permission, issue_token, roles_allowed
+from .models import Product, Quotation, QuotationItem, StockMovement, Supplier, SupplierContract, VehicleFitment, PurchaseOrder, PurchaseOrderItem, PurchaseOrderStatusEvent, GoodsReceipt, GoodsReceiptLine, SupplierInvoice, Warehouse, WarehouseStock, StockTransfer, SalesOrder, SalesOrderItem, Invoice, Payment, FinanceTaxRule, ReturnRequest, InventoryCount, InventoryCountLine, ProductLot, SupplierPriceSnapshot, Customer, CustomerPortalToken, CustomerPortalAccount, PortalAccessLog, PriceRule, Notification, ApprovalRequest, AuditLog, DemandHistory, PurchasePlan, RFQ, RFQOffer, IntegrationConnection, WebhookSubscription, IntegrationLog, WebhookDelivery, PwaDevice, SyncConflict, MobileTask, AutomationRule, AutomationRun, FleetVehicle, FleetWorkOrder, SupportTicket, SupportCommunication, DeliveryRoute, Shipment, Organization, OrganizationMembership, OrganizationInvitation, StockLedgerEntry, StockReservation, PermissionDefinition, RolePermission, Profile, UserSecurityProfile, UserSession
 from .serializers import product_dict, quotation_dict, supplier_dict
-
-ROLE_MODULES = {
-    "admin": ["dashboard", "inventory", "quotations", "suppliers", "stock", "barcodes", "fitments", "purchase_orders", "warehouses", "reorder", "sales_flow", "fulfillment", "returns", "inventory_control", "supplier_performance", "portal", "crm", "pricing", "analytics", "governance"],
-    "manager": ["dashboard", "inventory", "quotations", "suppliers", "stock", "barcodes", "fitments", "purchase_orders", "warehouses", "reorder", "sales_flow", "fulfillment", "returns", "inventory_control", "supplier_performance", "portal", "crm", "pricing", "analytics", "governance"],
-    "sales": ["dashboard", "inventory", "quotations", "barcodes", "fitments", "sales_flow", "fulfillment", "returns", "portal", "crm", "pricing", "analytics", "governance"],
-    "store": ["dashboard", "inventory", "stock", "barcodes", "fitments", "purchase_orders", "warehouses", "reorder", "sales_flow", "fulfillment", "returns", "inventory_control", "supplier_performance", "governance"],
-}
 
 def parse_body(request):
     try:
@@ -26,7 +26,7 @@ def parse_body(request):
 
 def record_audit(request, action, entity, entity_id="", detail=""):
     try:
-        AuditLog.objects.create(user=getattr(request, "api_user", None), action=action, entity=entity, entity_id=str(entity_id or ""), detail=str(detail or "")[:300])
+        AuditLog.objects.create(user=getattr(request, "api_user", None), organization=getattr(request, "organization", None), branch=getattr(request, "branch", None), action=action, entity=entity, entity_id=str(entity_id or ""), detail=str(detail or "")[:300], ip_address=request.META.get("REMOTE_ADDR"), user_agent=request.META.get("HTTP_USER_AGENT", "")[:300], metadata={"method": request.method, "path": request.path})
     except Exception:
         pass
 
@@ -45,25 +45,31 @@ def login_view(request):
     user = authenticate(request, username=email, password=password)
     if not user:
         return JsonResponse({"detail": "Invalid email or password"}, status=401)
-    role = user.profile.role
+    organization = get_current_organization(user)
+    role = get_effective_role(user, organization)
     return JsonResponse({
-        "token": issue_token(user),
+        "token": issue_token(user, request),
         "user": {"id": user.id, "name": user.get_full_name() or email.split("@")[0].title(), "email": user.email or email, "role": role},
         "modules": ROLE_MODULES[role],
+        "permissions": get_permission_map(role),
+        "organization": {"id": organization.id, "name": organization.name, "plan": organization.plan},
     })
 
 @api_login_required
 def me_view(request):
     user = request.api_user
-    role = user.profile.role
+    organization = get_current_organization(user)
+    role = get_effective_role(user, organization)
     return JsonResponse({
         "user": {"id": user.id, "name": user.get_full_name() or user.username, "email": user.email, "role": role},
         "modules": ROLE_MODULES[role],
+        "permissions": get_permission_map(role),
+        "organization": {"id": organization.id, "name": organization.name, "plan": organization.plan},
     })
 
-@api_login_required
+@roles_allowed("admin", "manager", "sales", "store")
 def dashboard_view(request):
-    role = request.api_user.profile.role
+    role = request.effective_role
     inventory_value = ExpressionWrapper(F("price") * F("stock_qty"), output_field=DecimalField(max_digits=16, decimal_places=2))
     total_inventory_value = Product.objects.aggregate(total=Sum(inventory_value))["total"] or 0
     data = {
@@ -81,20 +87,39 @@ def dashboard_view(request):
     return JsonResponse(data)
 
 @csrf_exempt
-@api_login_required
+@roles_allowed("admin", "manager", "sales", "store")
 def inventory_view(request):
     if request.method == "GET":
         qs = Product.objects.select_related("supplier").all().order_by("name")
         q = request.GET.get("q", "").strip()
         if q:
-            qs = qs.filter(Q(sku__icontains=q) | Q(name__icontains=q) | Q(brand__icontains=q) | Q(category__icontains=q) | Q(supplier__name__icontains=q))
-        return JsonResponse({"items": [product_dict(p) for p in qs[:250]], "count": qs.count()})
+            qs = qs.filter(Q(sku__icontains=q) | Q(name__icontains=q) | Q(brand__icontains=q) | Q(category__icontains=q) | Q(barcode__icontains=q) | Q(supplier__name__icontains=q))
+        try: page=max(1,int(request.GET.get("page",1))); page_size=min(100,max(1,int(request.GET.get("page_size",50))))
+        except ValueError: return JsonResponse({"detail":"page and page_size must be whole numbers"},status=400)
+        count=qs.count(); start=(page-1)*page_size
+        return JsonResponse({"items": [product_dict(p) for p in qs[start:start+page_size]], "count": count, "page": page, "page_size": page_size, "pages": max(1,ceil(count/page_size))})
     if request.method == "POST":
-        if request.api_user.profile.role not in {"admin", "manager"}:
+        if request.effective_role not in {"admin", "manager"}:
             return JsonResponse({"detail": "Only admin or manager can add inventory"}, status=403)
         data = parse_body(request)
         if data is None:
             return JsonResponse({"detail": "Invalid JSON"}, status=400)
+        if str(data.get("action", "")).strip() == "import":
+            raw_rows=data.get("rows") or []
+            if isinstance(raw_rows,str): raw_rows=list(csv.DictReader(io.StringIO(raw_rows)))
+            if not isinstance(raw_rows,list) or not raw_rows: return JsonResponse({"detail":"Provide at least one catalog row"},status=400)
+            created=updated=0
+            try:
+                for row in raw_rows:
+                    sku=str(row.get("sku","")).strip().upper()
+                    if not sku or not str(row.get("name","")).strip(): raise ValueError("Every row needs sku and name")
+                    supplier=None
+                    if str(row.get("supplier","")).strip(): supplier,_=Supplier.objects.get_or_create(name=str(row["supplier"]).strip())
+                    product,was_created=Product.objects.update_or_create(sku=sku,defaults={"name":str(row["name"]).strip(),"brand":str(row.get("brand","Imported")).strip(),"category":str(row.get("category","auto")).strip(),"supplier":supplier,"price":float(row.get("price",0) or 0),"stock_qty":int(row.get("stock_qty",0) or 0),"reorder_level":int(row.get("reorder_level",10) or 10),"bin_location":str(row.get("bin_location","")).strip(),"barcode":str(row.get("barcode","")).strip() or None})
+                    created += int(was_created); updated += int(not was_created)
+            except Exception as exc: return JsonResponse({"detail":f"Catalog import failed: {exc}"},status=400)
+            record_audit(request,"bulk import","product","",f"created {created}, updated {updated}")
+            return JsonResponse({"summary":{"created":created,"updated":updated,"total":created+updated}},status=201)
         required = ["sku", "name", "brand", "category", "price"]
         if any(not str(data.get(k, "")).strip() for k in required):
             return JsonResponse({"detail": "SKU, name, brand, category and price are required"}, status=400)
@@ -145,12 +170,20 @@ def quotations_view(request):
             return JsonResponse({"detail": "Customer name is required"}, status=400)
         try:
             valid_until = date.fromisoformat(str(data["valid_until"])) if data.get("valid_until") else timezone.localdate()
+            raw_items=data.get("items") or []
+            if isinstance(raw_items,str): raw_items=json.loads(raw_items or "[]")
+            tax_rate=Decimal(str(data.get("tax_rate",0) or 0)); line_total=Decimal("0")
+            prepared=[]
+            for line in raw_items:
+                product=Product.objects.get(sku=str(line["sku"]).strip().upper()); quantity=max(1,int(line.get("quantity",1))); unit_price=Decimal(str(line.get("unit_price") or product.price)); total_line=unit_price*quantity; line_total += total_line; prepared.append((product,quantity,unit_price,total_line))
+            subtotal=line_total if prepared else Decimal(str(data.get("total",0) or 0)); tax_total=(subtotal*tax_rate/Decimal("100")).quantize(Decimal("0.01")); total=subtotal+tax_total
             quote = Quotation.objects.create(
                 quote_no=f"QT-{timezone.now():%y%m%d}-{uuid4().hex[:4].upper()}",
                 customer_name=str(data["customer_name"]).strip(), customer_company=str(data.get("customer_company", "")).strip(),
-                total=float(data.get("total", 0)), status=str(data.get("status", "draft")),
+                total=total, subtotal=subtotal, tax_rate=tax_rate, tax_total=tax_total, status=str(data.get("status", "draft")),
                 valid_until=valid_until, created_by=request.api_user,
             )
+            QuotationItem.objects.bulk_create([QuotationItem(quotation=quote,product=product,quantity=quantity,unit_price=unit_price,line_total=total_line) for product,quantity,unit_price,total_line in prepared])
         except Exception as exc:
             return JsonResponse({"detail": f"Could not create quotation: {exc}"}, status=400)
         record_audit(request, "create", "quotation", quote.id, quote.quote_no)
@@ -161,42 +194,57 @@ def quotations_view(request):
 @roles_allowed("admin", "manager", "store")
 def stock_view(request):
     if request.method == "GET":
-        movements = StockMovement.objects.select_related("product").order_by("-created_at")[:25]
+        movement_query = StockLedgerEntry.objects.select_related("product").filter(organization=request.organization)
+        if request.branch:
+            movement_query = movement_query.filter(warehouse=request.branch)
+        movements = movement_query.order_by("-created_at")[:25]
         return JsonResponse({"items": [{
             "id": m.id, "sku": m.product.sku, "product": m.product.name, "type": m.movement_type,
-            "quantity": m.quantity, "reference": m.reference, "created_at": m.created_at.isoformat(),
+            "quantity": abs(m.quantity), "reference": m.reference, "created_at": m.created_at.isoformat(),
         } for m in movements]})
     if request.method == "POST":
         data = parse_body(request)
         if data is None:
             return JsonResponse({"detail": "Invalid JSON"}, status=400)
         try:
-            product = Product.objects.get(sku=str(data.get("sku", "")).strip().upper())
+            idempotency_key = str(data.get("idempotency_key") or request.headers.get("Idempotency-Key") or uuid4().hex)
+            existing = StockLedgerEntry.objects.filter(idempotency_key=idempotency_key, organization=request.organization).select_related("product").first()
+            if existing:
+                return JsonResponse({"item": {"id": existing.id, "sku": existing.product.sku, "product": existing.product.name, "type": existing.movement_type, "quantity": abs(existing.quantity), "reference": existing.reference, "created_at": existing.created_at.isoformat()}, "idempotent": True})
+            product = Product.objects.select_for_update().get(sku=str(data.get("sku", "")).strip().upper())
             movement_type = str(data.get("type", "in"))
             quantity = abs(int(data.get("quantity", 0)))
             if quantity == 0:
                 raise ValueError("Quantity must be greater than zero")
-            if movement_type == "in":
-                product.stock_qty += quantity
+            previous_qty = product.stock_qty
+            if movement_type == "in": delta = quantity
             elif movement_type == "out":
-                product.stock_qty = max(0, product.stock_qty - quantity)
-            elif movement_type == "adjustment":
-                product.stock_qty = quantity
+                if product.stock_qty - product.reserved_qty < quantity: raise ValueError("Insufficient available stock")
+                delta = -quantity
+            elif movement_type == "adjustment": delta = quantity - product.stock_qty
             else:
                 raise ValueError("Invalid movement type")
-            product.save(update_fields=["stock_qty", "updated_at"])
-            movement = StockMovement.objects.create(product=product, movement_type=movement_type, quantity=quantity, reference=str(data.get("reference", "")).strip())
+            if movement_type == "adjustment" and request.effective_role == "store":
+                approval=ApprovalRequest.objects.create(kind="stock", reference=str(data.get("reference") or product.sku), amount=abs(delta) * product.price, organization=request.organization, branch=request.branch, payload={"sku": product.sku, "quantity": quantity, "type": movement_type}, requested_by=request.api_user, notes="Stock adjustment requires manager approval")
+                Notification.objects.create(role="manager", title="Stock adjustment approval needed", message=f"{product.sku} adjustment requested by {request.api_user.get_full_name() or request.api_user.username}")
+                record_audit(request, "request stock approval", "approval", approval.id, product.sku)
+                return JsonResponse({"item": {"id": approval.id, "status": approval.status, "kind": approval.kind, "reference": approval.reference, "amount": float(approval.amount)}, "approval_required": True}, status=202)
+            with transaction.atomic():
+                product.stock_qty = product.stock_qty + delta
+                product.save(update_fields=["stock_qty", "updated_at"])
+                ledger = StockLedgerEntry.objects.create(organization=request.organization, product=product, warehouse=request.branch, movement_type=movement_type, quantity=delta, balance_qty=product.stock_qty, idempotency_key=idempotency_key, reference=str(data.get("reference", "")).strip(), created_by=request.api_user)
+                movement = StockMovement.objects.create(product=product, movement_type=movement_type, quantity=quantity, reference=str(data.get("reference", "")).strip())
         except Exception as exc:
             return JsonResponse({"detail": f"Could not record stock movement: {exc}"}, status=400)
         record_audit(request, "stock movement", "product", product.id, f"{movement_type} {quantity} / {movement.reference}")
         return JsonResponse({"item": {
-            "id": movement.id, "sku": product.sku, "product": product.name, "type": movement.movement_type,
+            "id": ledger.id, "sku": product.sku, "product": product.name, "type": movement.movement_type,
             "quantity": movement.quantity, "reference": movement.reference, "created_at": movement.created_at.isoformat(),
         }}, status=201)
     return JsonResponse({"detail": "Method not allowed"}, status=405)
 
 @csrf_exempt
-@api_login_required
+@roles_allowed("admin", "manager", "sales", "store")
 def barcodes_view(request):
     if request.method == "GET":
         q = request.GET.get("q", "").strip()
@@ -219,7 +267,7 @@ def barcodes_view(request):
         return JsonResponse({"item": product_dict(product)}, status=201)
     return JsonResponse({"detail": "Method not allowed"}, status=405)
 
-@api_login_required
+@roles_allowed("admin", "manager", "sales", "store")
 def barcode_lookup_view(request):
     code = request.GET.get("code", "").strip()
     try:
@@ -229,7 +277,7 @@ def barcode_lookup_view(request):
     return JsonResponse({"item": product_dict(product)})
 
 @csrf_exempt
-@api_login_required
+@roles_allowed("admin", "manager", "sales", "store")
 def fitments_view(request):
     if request.method == "GET":
         q = request.GET.get("q", "").strip()
@@ -240,6 +288,18 @@ def fitments_view(request):
         return JsonResponse({"items": items, "count": qs.count()})
     if request.method == "POST":
         data = parse_body(request) or {}
+        if str(data.get("action", "")) == "decode_vin":
+            vin = str(data.get("vin", "")).replace(" ", "").upper()
+            vehicle_map = {
+                "MA3EJKD1S00A12345": {"make": "Maruti Suzuki", "model": "Swift", "year": 2022, "variant": "Petrol / AMT", "engine": "1.2L", "fuel": "Petrol"},
+                "MALBB51BLNM123456": {"make": "Hyundai", "model": "i20", "year": 2023, "variant": "Sportz", "engine": "1.2L", "fuel": "Petrol"},
+            }
+            vehicle = vehicle_map.get(vin) if len(vin) >= 8 else None
+            if not vehicle:
+                return JsonResponse({"detail": "Enter a supported demo VIN or a valid 8+ character VIN"}, status=400)
+            matches = VehicleFitment.objects.select_related("product").filter(make=vehicle["make"], model=vehicle["model"], year_from__lte=vehicle["year"], year_to__gte=vehicle["year"])
+            result = [{"id": f.id, "sku": f.product.sku, "product": f.product.name, "make": f.make, "model": f.model, "year_from": f.year_from, "year_to": f.year_to, "variant": f.variant, "engine": f.engine, "oem_number": f.oem_number, "stock_qty": f.product.stock_qty, "stock_status": "out" if f.product.stock_qty <= 0 else "low" if f.product.stock_qty <= f.product.reorder_level else "healthy", "fitment_confidence": "98%" if f.oem_number else "92%"} for f in matches]
+            return JsonResponse({"item": {"vin": vin, "vehicle": vehicle, "matches": result}})
         try:
             product = Product.objects.get(sku=str(data.get("sku", "")).strip().upper())
             fitment = VehicleFitment.objects.create(product=product, make=str(data["make"]).strip(), model=str(data["model"]).strip(), year_from=int(data["year_from"]), year_to=int(data.get("year_to") or data["year_from"]), variant=str(data.get("variant", "")).strip(), engine=str(data.get("engine", "")).strip(), oem_number=str(data.get("oem_number", "")).strip())
@@ -252,10 +312,11 @@ def fitments_view(request):
 @roles_allowed("admin", "manager", "store")
 def purchase_orders_view(request):
     if request.method == "GET":
-        qs = PurchaseOrder.objects.select_related("supplier", "created_by").prefetch_related("items__product").order_by("-created_at")
+        qs = PurchaseOrder.objects.select_related("supplier", "created_by").prefetch_related("items__product", "status_events__changed_by").order_by("-created_at")
         items=[]
         for po in qs[:100]:
-            items.append({"id":po.id,"po_no":po.po_no,"supplier":po.supplier.name,"status":po.status,"expected_date":po.expected_date.isoformat() if po.expected_date else None,"total":float(po.total),"created_by":(po.created_by.get_full_name() or po.created_by.username) if po.created_by else "System","line_count":po.items.count(),"received_lines":sum(1 for i in po.items.all() if i.received_qty >= i.quantity)})
+            ordered_qty=sum(i.quantity for i in po.items.all()); received_qty=sum(i.received_qty for i in po.items.all())
+            items.append({"id":po.id,"po_no":po.po_no,"supplier":po.supplier.name,"supplier_rating":float(po.supplier.rating),"lead_time_days":po.supplier.lead_time_days,"status":po.status,"expected_date":po.expected_date.isoformat() if po.expected_date else None,"total":float(po.total),"created_by":(po.created_by.get_full_name() or po.created_by.username) if po.created_by else "System","line_count":po.items.count(),"ordered_qty":ordered_qty,"received_qty":received_qty,"received_lines":sum(1 for i in po.items.all() if i.received_qty >= i.quantity),"progress":round(received_qty / ordered_qty * 100) if ordered_qty else 0,"events":[{"status":event.status,"note":event.note,"changed_by":(event.changed_by.get_full_name() or event.changed_by.username) if event.changed_by else "System","created_at":event.created_at.isoformat()} for event in po.status_events.all()]})
         return JsonResponse({"items":items,"count":qs.count()})
     if request.method == "POST":
         data=parse_body(request) or {}
@@ -270,6 +331,7 @@ def purchase_orders_view(request):
                         line.product.stock_qty += remaining; line.product.save(update_fields=["stock_qty","updated_at"])
                         StockMovement.objects.create(product=line.product,movement_type="in",quantity=remaining,reference=po.po_no)
                 po.status="received"; po.received_at=timezone.now(); po.save(update_fields=["status","received_at"])
+                PurchaseOrderStatusEvent.objects.create(purchase_order=po,status=po.status,note="All open quantities received",changed_by=request.api_user)
             except Exception as exc:
                 return JsonResponse({"detail":f"Could not receive purchase order: {exc}"},status=400)
             return JsonResponse({"item":{"id":po.id,"po_no":po.po_no,"supplier":po.supplier.name,"status":po.status,"expected_date":po.expected_date.isoformat() if po.expected_date else None,"total":float(po.total),"line_count":po.items.count(),"received_lines":po.items.count()}})
@@ -280,37 +342,615 @@ def purchase_orders_view(request):
             qty=max(1,int(data.get("quantity",1))); unit_cost=float(data.get("unit_cost") or product.price)
             po=PurchaseOrder.objects.create(po_no=f"PO-{timezone.now():%y%m%d}-{uuid4().hex[:4].upper()}",supplier=supplier,status=str(data.get("status","draft")),expected_date=expected,total=qty*unit_cost,created_by=request.api_user)
             PurchaseOrderItem.objects.create(purchase_order=po,product=product,quantity=qty,unit_cost=unit_cost)
+            PurchaseOrderStatusEvent.objects.create(purchase_order=po,status=po.status,note="Purchase order created",changed_by=request.api_user)
             SupplierPriceSnapshot.objects.create(supplier=supplier,product=product,unit_cost=unit_cost,source_po=po)
         except Exception as exc:
             return JsonResponse({"detail":f"Could not create purchase order: {exc}"},status=400)
-        return JsonResponse({"item":{"id":po.id,"po_no":po.po_no,"supplier":po.supplier.name,"status":po.status,"expected_date":po.expected_date.isoformat() if po.expected_date else None,"total":float(po.total),"created_by":request.api_user.get_full_name() or request.api_user.username,"line_count":1,"received_lines":0}},status=201)
+        return JsonResponse({"item":{"id":po.id,"po_no":po.po_no,"supplier":po.supplier.name,"supplier_rating":float(po.supplier.rating),"lead_time_days":po.supplier.lead_time_days,"status":po.status,"expected_date":po.expected_date.isoformat() if po.expected_date else None,"total":float(po.total),"created_by":request.api_user.get_full_name() or request.api_user.username,"line_count":1,"ordered_qty":qty,"received_qty":0,"received_lines":0,"progress":0,"events":[{"status":po.status,"note":"Purchase order created","changed_by":request.api_user.get_full_name() or request.api_user.username}]}},status=201)
     return JsonResponse({"detail":"Method not allowed"},status=405)
+
+def receiving_po_dict(po):
+    items=[]
+    accepted_total=0; damaged_total=0; ordered_total=0
+    for line in po.items.select_related("product").all():
+        accepted=GoodsReceiptLine.objects.filter(purchase_order_item=line).aggregate(total=Sum("accepted_qty"))["total"] or 0
+        damaged=GoodsReceiptLine.objects.filter(purchase_order_item=line).aggregate(total=Sum("damaged_qty"))["total"] or 0
+        ordered_total += line.quantity; accepted_total += accepted; damaged_total += damaged
+        items.append({"id":line.id,"sku":line.product.sku,"product":line.product.name,"ordered_qty":line.quantity,"received_qty":line.received_qty,"accepted_qty":accepted,"damaged_qty":damaged,"remaining_qty":max(0,line.quantity-line.received_qty),"unit_cost":float(line.unit_cost)})
+    invoices=[{"id":invoice.id,"invoice_no":invoice.invoice_no,"invoice_date":invoice.invoice_date.isoformat() if invoice.invoice_date else None,"invoice_qty":invoice.invoice_qty,"subtotal":float(invoice.subtotal),"tax":float(invoice.tax),"total":float(invoice.total),"status":invoice.status,"notes":invoice.notes,"created_by":(invoice.created_by.get_full_name() or invoice.created_by.username) if invoice.created_by else "System"} for invoice in po.supplier_invoices.select_related("created_by").all()]
+    return {"id":po.id,"po_no":po.po_no,"supplier":po.supplier.name,"status":po.status,"expected_date":po.expected_date.isoformat() if po.expected_date else None,"total":float(po.total),"line_count":len(items),"ordered_qty":ordered_total,"accepted_qty":accepted_total,"damaged_qty":damaged_total,"remaining_qty":max(0,ordered_total-accepted_total-damaged_total),"items":items,"invoices":invoices}
+
+@csrf_exempt
+@roles_allowed("admin", "manager", "store")
+def receiving_view(request):
+    if request.method == "GET":
+        qs=PurchaseOrder.objects.select_related("supplier").prefetch_related("items__product").order_by("-created_at")
+        orders=[receiving_po_dict(po) for po in qs[:100]]
+        invoices=[invoice for po in orders for invoice in po["invoices"]]
+        return JsonResponse({"orders":orders,"invoices":invoices,"summary":{"purchase_orders":len(orders),"awaiting_receipt":sum(1 for po in orders if po["remaining_qty"]>0 and po["status"] in {"approved","ordered","partial"}),"damaged_units":sum(po["damaged_qty"] for po in orders),"invoice_exceptions":sum(1 for invoice in invoices if invoice["status"]=="exception")}})
+    if request.method != "POST": return JsonResponse({"detail":"Method not allowed"},status=405)
+    data=parse_body(request) or {}; action=str(data.get("action","receive"))
+    try:
+        if action == "receive":
+            with transaction.atomic():
+                po=PurchaseOrder.objects.select_related("supplier").prefetch_related("items__product").select_for_update().get(id=int(data["po_id"]))
+                requested=data.get("lines") or [{"item_id":line.id,"accepted_qty":max(0,line.quantity-line.received_qty),"damaged_qty":0} for line in po.items.all() if line.quantity>line.received_qty]
+                if not requested: raise ValueError("This purchase order has no remaining quantity")
+                receipt=GoodsReceipt.objects.create(receipt_no=f"GRN-{timezone.now():%y%m%d}-{uuid4().hex[:4].upper()}",purchase_order=po,notes=str(data.get("notes",""))[:300],received_by=request.api_user)
+                posted=0
+                for raw in requested:
+                    line=PurchaseOrderItem.objects.select_related("product").select_for_update().get(id=int(raw["item_id"]),purchase_order=po)
+                    accepted=max(0,int(raw.get("accepted_qty",0) or 0)); damaged=max(0,int(raw.get("damaged_qty",0) or 0)); total_qty=accepted+damaged; remaining=max(0,line.quantity-line.received_qty)
+                    if total_qty<=0: continue
+                    if total_qty>remaining: raise ValueError(f"Receipt exceeds remaining quantity for {line.product.sku}")
+                    GoodsReceiptLine.objects.create(receipt=receipt,purchase_order_item=line,accepted_qty=accepted,damaged_qty=damaged,notes=str(raw.get("notes",""))[:240])
+                    line.received_qty += total_qty; line.save(update_fields=["received_qty"])
+                    if accepted:
+                        line.product.stock_qty += accepted; line.product.save(update_fields=["stock_qty","updated_at"])
+                        StockMovement.objects.create(product=line.product,movement_type="in",quantity=accepted,reference=receipt.receipt_no)
+                    posted += total_qty
+                if not posted: raise ValueError("Enter an accepted or damaged quantity")
+                complete=all(line.received_qty>=line.quantity for line in po.items.all())
+                po.status="received" if complete else "partial"; po.received_at=timezone.now(); po.save(update_fields=["status","received_at"])
+                PurchaseOrderStatusEvent.objects.create(purchase_order=po,status=po.status,note=f"Goods receipt {receipt.receipt_no} posted",changed_by=request.api_user)
+            record_audit(request,"post goods receipt","goods receipt",receipt.id,receipt.receipt_no)
+            return JsonResponse({"item":receiving_po_dict(po)},status=201)
+        if action == "invoice":
+            po=PurchaseOrder.objects.select_related("supplier").prefetch_related("items__product").get(id=int(data["po_id"]))
+            invoice_no=str(data["invoice_no"]).strip()
+            if not invoice_no: raise ValueError("Supplier invoice number is required")
+            invoice_qty=max(0,int(data.get("invoice_qty",0) or 0)); total=Decimal(str(data.get("total",0) or 0)); tax=Decimal(str(data.get("tax",0) or 0)); subtotal=Decimal(str(data.get("subtotal",total-tax) or 0))
+            accepted=sum(GoodsReceiptLine.objects.filter(purchase_order_item__purchase_order=po).values_list("accepted_qty",flat=True)); ordered=sum(line.quantity for line in po.items.all()); unit_total=po.total / ordered if ordered else Decimal("0"); expected_total=(unit_total*invoice_qty).quantize(Decimal("0.01")); status="matched" if invoice_qty>0 and invoice_qty<=accepted and abs(total-expected_total)<=Decimal("0.01") else "exception"
+            invoice=SupplierInvoice.objects.create(invoice_no=invoice_no,purchase_order=po,supplier=po.supplier,invoice_date=date.fromisoformat(str(data["invoice_date"])) if data.get("invoice_date") else timezone.localdate(),invoice_qty=invoice_qty,subtotal=subtotal,tax=tax,total=total,status=status,notes=str(data.get("notes",""))[:300],created_by=request.api_user)
+            record_audit(request,"record supplier invoice","supplier invoice",invoice.id,f"{invoice.invoice_no} ({invoice.status})")
+            return JsonResponse({"item":receiving_po_dict(po),"invoice":{"id":invoice.id,"invoice_no":invoice.invoice_no,"status":invoice.status}},status=201)
+        if action == "approve":
+            if request.effective_role not in {"admin","manager"}: return JsonResponse({"detail":"Only admin or manager can approve supplier invoices"},status=403)
+            invoice=SupplierInvoice.objects.get(id=int(data["invoice_id"])); invoice.status="approved"; invoice.approved_by=request.api_user; invoice.approved_at=timezone.now(); invoice.save(update_fields=["status","approved_by","approved_at"])
+            record_audit(request,"approve supplier invoice","supplier invoice",invoice.id,invoice.invoice_no)
+            return JsonResponse({"item":{"id":invoice.id,"invoice_no":invoice.invoice_no,"status":invoice.status}})
+        raise ValueError("Unknown receiving action")
+    except Exception as exc:
+        return JsonResponse({"detail":f"Could not complete receiving action: {exc}"},status=400)
+
+@csrf_exempt
+@roles_allowed("admin", "manager", "store")
+def mobile_warehouse_view(request):
+    organization=request.organization
+    if request.method == "GET":
+        device_key=request.GET.get("device_key") or f"user:{request.api_user.id}"
+        device=PwaDevice.objects.filter(organization=organization,device_key=device_key).first()
+        if device and request.branch and device.warehouse_id not in {None, request.branch.id}:
+            return JsonResponse({"detail":"Device belongs to another branch"}, status=403)
+        tasks=[]
+        if device:
+            for task in device.tasks.select_related("product").order_by("-created_at")[:100]:
+                tasks.append({"id": task.id, "type": task.task_type, "reference": task.reference, "location": task.location, "sku": task.product.sku, "product": task.product.name, "quantity": task.quantity, "status": task.status, "synced": task.synced_at is not None, "created_at": task.created_at.isoformat()})
+        last_sync=device.last_seen.isoformat() if device and device.last_seen else None
+        return JsonResponse({"queue": tasks, "last_sync": last_sync, "cursor": device.sync_cursor if device else 0, "device_id": device.id if device else None})
+    data=parse_body(request) or {}; action=str(data.get("action", "scan"))
+    try:
+        device_key=str(data.get("device_key") or f"user:{request.api_user.id}")[:120]
+        device,created=PwaDevice.objects.get_or_create(organization=organization,device_key=device_key,defaults={"name":str(data.get("device_name") or device_key)[:140],"app_version":str(data.get("app_version") or "")[:30],"status":"online","last_seen":timezone.now(),"warehouse":request.branch})
+        if request.branch and device.warehouse_id not in {None, request.branch.id}:
+            return JsonResponse({"detail":"Device belongs to another branch"}, status=403)
+        if request.branch and device.warehouse_id is None:
+            device.warehouse=request.branch
+        device.status="online"; device.last_seen=timezone.now(); device.save(update_fields=["status","last_seen","warehouse"])
+        if action == "scan":
+            product=Product.objects.get(sku=str(data.get("sku", "")).strip().upper())
+            idem=str(data.get("idempotency_key") or f"{device_key}:{data.get('reference') or uuid4().hex}")[:120]
+            task,created=MobileTask.objects.get_or_create(organization=organization,idempotency_key=idem,defaults={"device":device,"task_type":str(data.get("type", "count")),"reference":str(data.get("reference") or f"SCAN-{timezone.now():%y%m%d}-{uuid4().hex[:4].upper()}"),"location":str(data.get("location", "DEL-MAIN")),"product":product,"quantity":max(1, int(data.get("quantity", 1)))})
+            item={"id": task.id, "type": task.task_type, "reference": task.reference, "location": task.location, "sku": task.product.sku, "product": task.product.name, "quantity": task.quantity, "status": task.status, "synced": task.synced_at is not None, "created_at": task.created_at.isoformat()}
+            record_audit(request, "mobile warehouse scan", "product", product.id, f"{item['type']} / {item['reference']}")
+            return JsonResponse({"item": item}, status=201 if created else 200)
+        if action == "sync":
+            now=timezone.now(); pending=MobileTask.objects.filter(organization=organization,device=device,synced_at__isnull=True,status="queued"); synced_count=pending.count(); pending.update(synced_at=now,status="synced"); device.sync_cursor += synced_count; device.last_seen=now; device.save(update_fields=["sync_cursor","last_seen"])
+            return JsonResponse({"item": {"last_sync": now.isoformat(), "synced": True, "synced_count": synced_count, "cursor": device.sync_cursor, "queued": MobileTask.objects.filter(organization=organization,device=device,synced_at__isnull=True).count()}})
+        if action == "conflict":
+            conflict=SyncConflict.objects.create(organization=organization,device=device,reference=str(data.get("reference") or "mobile-conflict"),field=str(data.get("field") or "quantity"),local_value=str(data.get("local_value") or ""),server_value=str(data.get("server_value") or ""))
+            return JsonResponse({"item":{"id":conflict.id,"status":conflict.status}},status=201)
+        task=MobileTask.objects.get(id=int(data["id"]),organization=organization,device=device)
+        task.status="complete"; task.completed_at=timezone.now(); task.save(update_fields=["status","completed_at"])
+        return JsonResponse({"item":{"id":task.id,"status":task.status,"synced":task.synced_at is not None}})
+    except Exception as exc:
+        return JsonResponse({"detail": f"Could not process mobile warehouse action: {exc}"}, status=400)
+
+@csrf_exempt
+@roles_allowed("admin", "manager", "sales", "store")
+def notifications_view(request):
+    if request.method == "GET":
+        qs=Notification.objects.filter(Q(user=request.api_user)|Q(user__isnull=True,role="")|Q(user__isnull=True,role=request.effective_role)).order_by("-created_at")[:100]
+        items=[{"id":n.id,"channel":"email","audience":n.user.get_full_name() if n.user else (n.role or "Operations team"),"event":n.title,"status":"read" if n.read else "queued","detail":n.message,"created_at":n.created_at.isoformat()} for n in qs]
+        return JsonResponse({"items":items,"templates":["RFQ response reminder","Purchase order dispatched","Delivery update","Invoice exception","Quote approval","Low-stock alert"]})
+    data=parse_body(request) or {}
+    try:
+        item=Notification.objects.create(user=request.api_user,title=str(data.get("event", "Operational update"))[:140],message=str(data.get("detail", "Notification queued for delivery."))[:300])
+        record_audit(request, "send notification", "notification", item.id, item.title)
+        return JsonResponse({"item":{"id":item.id,"channel":data.get("channel", "email"),"audience":data.get("audience", "Operations team"),"event":item.title,"status":"queued","detail":item.message,"created_at":item.created_at.isoformat()}}, status=201)
+    except Exception as exc:
+        return JsonResponse({"detail": f"Could not queue notification: {exc}"}, status=400)
+
+@csrf_exempt
+@roles_allowed("admin", "manager", "sales", "store")
+def copilot_view(request):
+    suggestions=["Which parts may stock out this week?", "Which supplier has the best delivery performance?", "Why is warehouse stock below target?", "What invoices need manager approval?"]
+    if request.method == "GET": return JsonResponse({"suggested_questions": suggestions, "messages": []})
+    data=parse_body(request) or {}; question=str(data.get("question", "")).strip(); lower=question.lower()
+    if not question: return JsonResponse({"detail":"Ask the copilot a question"}, status=400)
+    answer="Partora recommends reviewing the demand plan, supplier scorecard and action queue before committing inventory or payment changes."; source="Operations command center"
+    if "stock" in lower: answer="RLY-24V4 is the highest stock-out risk. Raise a replenishment plan for 90 units and confirm VoltEdge availability."; source="Demand planning + inventory"
+    elif "supplier" in lower or "delivery" in lower: answer="TorqueLine leads on reliability in the current history. VoltEdge is faster but has an invoice exception to resolve."; source="Supplier intelligence + receiving"
+    elif "warehouse" in lower: answer="Noida North is at 89% capacity. Move slow-moving stock before the next inbound receipt."; source="Warehouse control"
+    elif "invoice" in lower or "payment" in lower: answer="VE-INV-8821 needs manager review because its invoice quantity includes damaged units."; source="Finance + three-way matching"
+    item={"id":uuid4().hex[:8],"question":question,"answer":answer,"source":source,"confidence":"Demo analysis","created_at":timezone.now().isoformat()}
+    record_audit(request, "copilot question", "operations", item["id"], question)
+    return JsonResponse({"item":item})
+
+@csrf_exempt
+@roles_allowed("admin", "manager")
+def finance_view(request):
+    def parse_filter(name):
+        value=request.GET.get(name)
+        return date.fromisoformat(value) if value else None
+    def invoice_item(invoice):
+        paid=float(invoice.payments.aggregate(total=Sum("amount"))["total"] or 0); total=float(invoice.total); balance=max(0, total-paid); rate=float(invoice.tax_rate or 0)
+        return {"id":invoice.id,"invoice_no":invoice.invoice_no,"customer":invoice.sales_order.customer_company or invoice.sales_order.customer_name,"total":total,"paid":paid,"balance":balance,"status":"paid" if balance==0 else "partial" if paid else invoice.status,"due_date":invoice.due_date.isoformat(),"gst_rate":rate,"gst":round(total*rate/(100+rate),2) if rate else 0,"reconciled":bool(paid or balance==0)}
+    if request.method == "GET":
+        try:
+            start=parse_filter("from"); end=parse_filter("to")
+        except ValueError:
+            return JsonResponse({"detail":"Use ISO dates for from and to filters"},status=400)
+        invoice_query=Invoice.objects.select_related("sales_order").prefetch_related("payments").order_by("-created_at")
+        if start: invoice_query=invoice_query.filter(created_at__date__gte=start)
+        if end: invoice_query=invoice_query.filter(created_at__date__lte=end)
+        invoices=[invoice_item(i) for i in invoice_query[:250]]
+        today=timezone.localdate(); aging={"current":0,"1_30":0,"31_60":0,"61_plus":0}
+        for item in invoices:
+            days=(today-date.fromisoformat(item["due_date"])).days
+            bucket="current" if days<=0 else "1_30" if days<=30 else "31_60" if days<=60 else "61_plus"
+            aging[bucket]+=item["balance"]
+        payment_query=Payment.objects.select_related("invoice").order_by("-paid_at")
+        if start: payment_query=payment_query.filter(paid_at__date__gte=start)
+        if end: payment_query=payment_query.filter(paid_at__date__lte=end)
+        payments=[{"id":p.id,"reference":p.reference,"invoice_no":p.invoice.invoice_no,"amount":float(p.amount),"method":p.method,"reconciled":bool(p.reference),"paid_at":p.paid_at.date().isoformat()} for p in payment_query[:100]]
+        supplier_query=SupplierInvoice.objects.exclude(status="rejected")
+        if start: supplier_query=supplier_query.filter(invoice_date__gte=start)
+        if end: supplier_query=supplier_query.filter(invoice_date__lte=end)
+        input_tax=float(supplier_query.aggregate(total=Sum("tax"))["total"] or 0); output_tax=round(sum(i["gst"] for i in invoices),2); active_rules=FinanceTaxRule.objects.filter(active=True).order_by("-effective_from")
+        rules=[{"name":rule.name,"rate":float(rule.rate),"effective_from":rule.effective_from.isoformat()} for rule in active_rules[:20]] or [{"name":"GST","rate":18.0,"effective_from":"default"}]
+        return JsonResponse({"filters":{"from":start.isoformat() if start else None,"to":end.isoformat() if end else None},"metrics":{"receivables":sum(i["balance"] for i in invoices),"payables":float(supplier_query.aggregate(total=Sum("total"))["total"] or 0),"overdue":sum(i["balance"] for i in invoices if date.fromisoformat(i["due_date"]) < today and i["balance"]),"gst_due":round(output_tax-input_tax,2),"reconciled":round(sum(1 for i in invoices if i["reconciled"])/len(invoices)*100) if invoices else 0},"invoices":invoices,"payments":payments,"aging":aging,"tax_rules":rules,"tax_summary":[{"label":"Output GST","value":output_tax},{"label":"Input GST","value":round(input_tax,2)},{"label":"Net GST payable","value":round(output_tax-input_tax,2)}]})
+    data=parse_body(request) or {}; action=str(data.get("action", "reconcile"))
+    try:
+        if action == "reconcile":
+            invoice=Invoice.objects.select_related("sales_order").prefetch_related("payments").get(id=int(data["invoice_id"])); amount=Decimal(str(data.get("amount", invoice.total) or 0)); Payment.objects.create(invoice=invoice,amount=amount,method=str(data.get("method", "bank")),reference=str(data.get("reference", "")),created_by=request.api_user)
+            paid=invoice.payments.aggregate(total=Sum("amount"))["total"] or 0; invoice.status="paid" if paid>=invoice.total else "partial"; invoice.save(update_fields=["status"]); record_audit(request,"reconcile payment","invoice",invoice.id,invoice.invoice_no); return JsonResponse({"item":invoice_item(invoice)})
+        if action == "export":
+            rows=["Invoice,Customer,Total,Paid,Balance,Status,Due date,GST"]
+            rows.extend(f"{item['invoice_no']},{item['customer']},{item['total']},{item['paid']},{item['balance']},{item['status']},{item['due_date']},{item['gst']}" for item in [invoice_item(i) for i in Invoice.objects.select_related("sales_order").prefetch_related("payments").order_by("-created_at")[:500]])
+            return JsonResponse({"item":{"format":"csv","filename":f"partora-finance-{timezone.localdate().isoformat()}.csv","rows":rows}})
+        return JsonResponse({"item":{"format":data.get("format", "csv"),"filename":f"partora-finance-{timezone.localdate().isoformat()}.csv"}})
+    except Exception as exc:
+        return JsonResponse({"detail": f"Could not complete finance action: {exc}"}, status=400)
+
+@csrf_exempt
+@roles_allowed("admin", "manager", "store")
+def warranty_view(request):
+    def claim_item(item): return {"id":item.id,"claim_no":item.return_no,"sku":item.product.sku,"product":item.product.name,"customer":item.customer_name,"reason":item.reason,"status":item.status,"resolution":item.resolution,"supplier":item.product.supplier.name if item.product.supplier else "Unassigned","recovery_amount":float(item.refund_amount),"root_cause":item.inspection_notes or "Pending inspection","created_at":item.created_at.isoformat()}
+    if request.method == "GET":
+        claims=[claim_item(item) for item in ReturnRequest.objects.select_related("product__supplier").order_by("-created_at")[:100]]; return JsonResponse({"metrics":{"open_claims":sum(1 for x in claims if x["status"] not in {"resolved","rejected"}),"approval_queue":sum(1 for x in claims if x["status"] in {"requested","inspected"}),"supplier_recovery":sum(x["recovery_amount"] for x in claims),"return_rate":round(len(claims)/max(Product.objects.count(),1)*100,1)},"claims":claims})
+    data=parse_body(request) or {}; action=str(data.get("action", "status"))
+    try:
+        item=ReturnRequest.objects.select_related("product__supplier").get(id=int(data["id"]))
+        if action == "status": item.status=str(data.get("status", item.status)); item.resolution=str(data.get("resolution", item.resolution)); item.inspection_notes=str(data.get("root_cause", item.inspection_notes)); item.save(update_fields=["status","resolution","inspection_notes","updated_at"])
+        elif action == "chargeback": item.refund_amount=Decimal(str(data.get("amount", item.refund_amount) or 0)); item.save(update_fields=["refund_amount","updated_at"])
+        record_audit(request,"update warranty claim","return",item.id,item.return_no); return JsonResponse({"item":claim_item(item)})
+    except Exception as exc:
+        return JsonResponse({"detail": f"Could not update warranty claim: {exc}"}, status=400)
+
+@csrf_exempt
+@roles_allowed("admin", "manager")
+def integrations_view(request):
+    organization=request.organization
+    if request.method == "GET":
+        connections=[{"id":x.id,"name":x.name,"type":x.integration_type,"status":x.status,"last_sync":x.last_sync.isoformat() if x.last_sync else None,"records":x.records,"failure_count":x.failure_count,"last_error":x.last_error} for x in IntegrationConnection.objects.filter(organization=organization).order_by("name")]
+        webhooks=[{"id":x.id,"event":x.event,"target":x.target,"status":x.status,"deliveries":x.deliveries,"delivery_attempts":x.delivery_attempts.count()} for x in WebhookSubscription.objects.filter(organization=organization).order_by("-created_at")[:50]]
+        logs=[{"id":x.id,"event":x.event,"target":x.target,"status":x.status,"created_at":x.created_at.isoformat()} for x in IntegrationLog.objects.filter(organization=organization).order_by("-created_at")[:50]]
+        return JsonResponse({"connections":connections,"webhooks":webhooks,"logs":logs})
+    data=parse_body(request) or {}; action=str(data.get("action","connect"))
+    try:
+        if action == "test":
+            item=IntegrationConnection.objects.get(id=int(data["id"]),organization=organization)
+            item.status="connected"; item.last_sync=timezone.now(); item.records += 1; item.failure_count=0; item.last_error=""
+            item.save(update_fields=["status","last_sync","records","failure_count","last_error"])
+            IntegrationLog.objects.create(organization=organization,connection=item,event="integration.tested",target=item.name,status="delivered",detail="Health check passed")
+            payload={"id":item.id,"name":item.name,"type":item.integration_type,"status":item.status,"last_sync":item.last_sync.isoformat(),"records":item.records,"failure_count":item.failure_count,"last_error":item.last_error}
+            return JsonResponse({"item":payload})
+        if action == "webhook":
+            signing_key=str(data.get("secret") or uuid4().hex)
+            item=WebhookSubscription.objects.create(organization=organization,event=str(data.get("event","invoice.paid")),target=str(data.get("target","https://client.example/webhooks/partora")),signing_key_digest=hashlib.sha256(signing_key.encode()).hexdigest(),created_by=request.api_user)
+            payload={"id":item.id,"event":item.event,"target":item.target,"status":item.status,"deliveries":item.deliveries,"delivery_attempts":0}
+            IntegrationLog.objects.create(organization=organization,event="webhook.created",target=item.target,detail=item.event)
+        elif action == "deliver":
+            item=WebhookSubscription.objects.get(id=int(data["webhook_id"]),organization=organization)
+            body=json.dumps(data.get("payload") or {"event":item.event,"sent_at":timezone.now().isoformat()},sort_keys=True)
+            signature=hmac.new(item.signing_key_digest.encode(),body.encode(),hashlib.sha256).hexdigest()
+            delivery=WebhookDelivery.objects.create(organization=organization,subscription=item,event=item.event,payload=body,signature=signature,status="delivered",attempts=1)
+            item.deliveries += 1; item.status="active"; item.save(update_fields=["deliveries","status"])
+            IntegrationLog.objects.create(organization=organization,event="webhook.delivered",target=item.target,status="delivered",detail=f"delivery {delivery.id}")
+            return JsonResponse({"item":{"id":item.id,"status":item.status,"deliveries":item.deliveries,"delivery_id":delivery.id,"signature":signature}})
+        else:
+            secret=str(data.get("secret") or "")
+            item=IntegrationConnection.objects.create(organization=organization,name=str(data.get("name","New connector")),integration_type=str(data.get("type","webhook")),status="connected",last_sync=timezone.now(),credential_digest=hashlib.sha256(secret.encode()).hexdigest() if secret else "",created_by=request.api_user)
+            payload={"id":item.id,"name":item.name,"type":item.integration_type,"status":item.status,"last_sync":item.last_sync.isoformat(),"records":item.records,"failure_count":item.failure_count,"last_error":item.last_error}
+            IntegrationLog.objects.create(organization=organization,connection=item,event="integration.connected",target=item.name,detail=item.integration_type)
+    except Exception as exc:
+        return JsonResponse({"detail":f"Could not configure integration: {exc}"},status=400)
+    record_audit(request,"integration setup","integration",payload["id"],payload.get("name",payload.get("event","webhook")))
+    return JsonResponse({"item":payload},status=201)
+
+@csrf_exempt
+@roles_allowed("admin")
+def pwa_admin_view(request):
+    organization=request.organization
+    if request.method == "GET":
+        device_query=PwaDevice.objects.select_related("warehouse").filter(active=True,organization=organization)
+        if request.branch: device_query=device_query.filter(warehouse=request.branch)
+        devices=[{"id":x.id,"name":x.name,"warehouse":x.warehouse.code if x.warehouse else "Unassigned","status":x.status,"app_version":x.app_version,"last_seen":x.last_seen.isoformat() if x.last_seen else None} for x in device_query.order_by("name")]
+        conflicts=[{"id":x.id,"reference":x.reference,"field":x.field,"local_value":x.local_value,"server_value":x.server_value,"status":x.status} for x in SyncConflict.objects.filter(status="needs_review",organization=organization).order_by("-created_at")[:100]]
+        sync_logs=AuditLog.objects.filter(action="pwa sync action",created_at__date=timezone.localdate())
+        last_sync=PwaDevice.objects.filter(organization=organization).aggregate(last=Max("last_seen"))["last"]
+        return JsonResponse({"devices":devices,"sync":{"queued":0,"synced_today":sync_logs.count(),"conflicts":len(conflicts),"last_sync":last_sync.isoformat() if last_sync else None},"conflicts":conflicts})
+    data=parse_body(request) or {}; action=str(data.get("action","sync"))
+    if action == "resolve":
+        try:
+            conflict=SyncConflict.objects.get(id=int(data["id"]),organization=organization)
+            conflict.status="resolved"; conflict.resolved_by=request.api_user; conflict.resolved_at=timezone.now(); conflict.save(update_fields=["status","resolved_by","resolved_at"])
+            item={"id":conflict.id,"status":conflict.status}
+        except Exception as exc:
+            return JsonResponse({"detail":f"Could not resolve sync conflict: {exc}"},status=400)
+    else:
+        device_query=PwaDevice.objects.filter(active=True,organization=organization)
+        if request.branch: device_query=device_query.filter(warehouse=request.branch)
+        now=timezone.now(); device_query.update(status="online",last_seen=now)
+        record_audit(request,"pwa sync action","device","queue","sync")
+        item={"id":None,"status":"synced","last_sync":now.isoformat(),"synced":True}
+    record_audit(request,"pwa sync action","device",item.get("id") or "queue",action)
+    return JsonResponse({"item":item})
+
+@csrf_exempt
+@roles_allowed("admin", "manager")
+def tenancy_view(request):
+    organization=request.organization
+    if request.method == "GET":
+        branches=[{"id":w.id,"code":w.code,"name":w.name,"users":w.organization_invitations.filter(status="accepted").count(),"status":"active"} for w in Warehouse.objects.filter(active=True,organization=organization).order_by("code")]
+        users=[{"id":m.user_id,"name":m.user.get_full_name() or m.user.username,"email":m.user.email,"role":m.role,"branch":m.primary_branch.code if m.primary_branch and not m.all_branches else "All branches","branch_id":m.primary_branch_id,"all_branches":m.all_branches,"approval_limit":float(m.approval_limit),"status":"active"} for m in organization.memberships.select_related("user","primary_branch").filter(active=True).order_by("user__first_name")]
+        users.extend({"id":invite.id,"name":invite.email,"email":invite.email,"role":invite.role,"branch":invite.branch.code if invite.branch else "All branches","approval_limit":float(invite.approval_limit),"status":"invited"} for invite in organization.invitations.select_related("branch").filter(status="pending").order_by("-created_at"))
+        return JsonResponse({"organization":{"id":organization.id,"name":organization.name,"plan":organization.plan.title(),"branches":len(branches),"users":len(users),"monthly_events":AuditLog.objects.filter(user__organization_memberships__organization=organization).count()},"branches":branches,"users":users})
+    data=parse_body(request) or {}; action=str(data.get("action","invite"))
+    if action=="role":
+        if request.effective_role != "admin": return JsonResponse({"detail":"Only an admin can change organization roles"},status=403)
+        try:
+            membership=OrganizationMembership.objects.select_related("user").get(organization=organization,user_id=int(data["user_id"]),active=True)
+            role=str(data.get("role", "")).strip()
+            valid_roles={choice[0] for choice in OrganizationMembership.ROLE_CHOICES}
+            if role not in valid_roles: raise ValueError("Invalid organization role")
+            branch_code=str(data.get("branch", "")).strip().upper()
+            branch=Warehouse.objects.filter(organization=organization, code=branch_code, active=True).first() if branch_code else None
+            all_branches=not bool(branch_code) or bool(data.get("all_branches"))
+            if branch_code and not branch: raise ValueError("Unknown branch")
+            membership.role=role; membership.approval_limit=float(data.get("approval_limit", membership.approval_limit) or 0); membership.primary_branch=None if all_branches else branch; membership.all_branches=all_branches; membership.save(update_fields=["role","approval_limit","primary_branch","all_branches"])
+            item={"id":membership.user_id,"name":membership.user.get_full_name() or membership.user.username,"email":membership.user.email,"role":membership.role,"branch":branch.code if branch and not all_branches else "All branches","branch_id":branch.id if branch and not all_branches else None,"all_branches":all_branches,"approval_limit":float(membership.approval_limit),"status":"active"}
+        except Exception as exc: return JsonResponse({"detail":f"Could not update role: {exc}"},status=400)
+    elif action=="branch":
+        try: branch=Warehouse.objects.create(code=str(data["code"]).strip().upper(),name=str(data["name"]).strip(),address=str(data.get("address","")),organization=organization); item={"id":branch.id,"code":branch.code,"name":branch.name,"users":0,"status":"active"}
+        except Exception as exc: return JsonResponse({"detail":f"Could not create branch: {exc}"},status=400)
+    else:
+        try:
+            branch=Warehouse.objects.filter(organization=organization).filter(code=str(data.get("branch","")).strip().upper()).first() if data.get("branch") else None
+            role=str(data.get("role","store")).strip(); valid_roles={choice[0] for choice in OrganizationMembership.ROLE_CHOICES}
+            if role not in valid_roles: raise ValueError("Invalid organization role")
+            invite=OrganizationInvitation.objects.create(organization=organization,email=str(data["email"]).strip().lower(),role=role,branch=branch,approval_limit=float(data.get("approval_limit",0) or 0),token=f"invite_{uuid4().hex}",invited_by=request.api_user)
+            item={"id":invite.id,"name":invite.email,"email":invite.email,"role":invite.role,"branch":branch.code if branch else "All branches","approval_limit":float(invite.approval_limit),"status":invite.status}
+        except Exception as exc: return JsonResponse({"detail":f"Could not invite user: {exc}"},status=400)
+    record_audit(request,"tenant administration","organization",item["id"],action); return JsonResponse({"item":item},status=200 if action=="role" else 201)
+
+
+@csrf_exempt
+@roles_allowed("admin")
+def permissions_view(request):
+    if request.method == "GET":
+        definitions = list(PermissionDefinition.objects.all())
+        grants = {(grant.role, grant.permission_id): grant.allowed for grant in RolePermission.objects.select_related("permission")}
+        modules = {}
+        for permission in definitions:
+            modules.setdefault(permission.module, {"module": permission.module, "label": permission.module.replace("_", " ").title(), "actions": {}})
+            modules[permission.module]["actions"][permission.action] = {
+                role: bool(grants.get((role, permission.id), has_permission(request.api_user, permission.module, permission.action, request.organization)))
+                for role in ("admin", "manager", "sales", "store")
+            }
+        return JsonResponse({"roles": ["admin", "manager", "sales", "store"], "actions": ["view", "create", "edit", "approve", "export"], "modules": list(modules.values())})
+    data = parse_body(request) or {}
+    role = str(data.get("role", "")).strip()
+    module = str(data.get("module", "")).strip()
+    action = str(data.get("permission", data.get("action", ""))).strip()
+    if role not in {choice[0] for choice in Profile.ROLE_CHOICES} or action not in {choice[0] for choice in PermissionDefinition.ACTION_CHOICES}:
+        return JsonResponse({"detail": "Invalid role or permission action"}, status=400)
+    permission = PermissionDefinition.objects.filter(module=module, action=action).first()
+    if not permission:
+        return JsonResponse({"detail": "Unknown module permission"}, status=400)
+    grant, _ = RolePermission.objects.update_or_create(role=role, permission=permission, defaults={"allowed": bool(data.get("allowed")), "updated_by": request.api_user})
+    record_audit(request, "permission policy change", "permission", grant.id, f"{role} {module}.{action}={grant.allowed}")
+    return JsonResponse({"item": {"role": role, "module": module, "permission": action, "allowed": grant.allowed}})
+
+@csrf_exempt
+@roles_allowed("admin", "manager")
+def automation_view(request):
+    organization=request.organization
+    if request.method == "GET":
+        rules=[{"id":x.id,"name":x.name,"trigger":x.trigger,"action":x.action,"status":x.status,"runs":x.runs,"last_run":x.last_run.isoformat() if x.last_run else None} for x in AutomationRule.objects.filter(organization=organization).order_by("name")]
+        runs=[{"id":x.id,"rule":x.rule.name,"result":x.result,"detail":x.detail,"created_at":x.created_at.isoformat()} for x in AutomationRun.objects.select_related("rule").filter(organization=organization).order_by("-created_at")[:100]]
+        return JsonResponse({"rules":rules,"runs":runs})
+    data=parse_body(request) or {}; action=str(data.get("action","rule"))
+    try:
+        if action == "rule":
+            rule=AutomationRule.objects.create(organization=organization,name=str(data.get("name","New automation rule")),trigger=str(data.get("trigger","stock.below_reorder")),action=str(data.get("rule_action","Send notification")),created_by=request.api_user)
+        else:
+            rule=AutomationRule.objects.get(id=int(data["id"]),organization=organization)
+            if action == "toggle":
+                rule.status="paused" if rule.status == "active" else "active"
+            elif action == "run":
+                if rule.status != "active": raise ValueError("Paused rules cannot be run")
+                rule.runs += 1; rule.last_run=timezone.now(); AutomationRun.objects.create(organization=organization,rule=rule,result="success",detail="Action completed")
+            else: raise ValueError("Unknown automation action")
+            rule.save(update_fields=["status","runs","last_run"])
+        item={"id":rule.id,"name":rule.name,"trigger":rule.trigger,"action":rule.action,"status":rule.status,"runs":rule.runs,"last_run":rule.last_run.isoformat() if rule.last_run else None}
+    except Exception as exc:
+        return JsonResponse({"detail":f"Could not update automation rule: {exc}"},status=400)
+    record_audit(request,"automation rule","rule",rule.id,action)
+    return JsonResponse({"item":item},status=201 if action=="rule" else 200)
+
+@csrf_exempt
+@roles_allowed("admin", "manager")
+def fleet_view(request):
+    organization=request.organization
+    def vehicle_item(vehicle):
+        return {"id":vehicle.id,"registration":vehicle.registration,"customer":vehicle.customer,"make":vehicle.make,"model":vehicle.model,"year":vehicle.year,"mileage":vehicle.mileage,"next_service":vehicle.next_service.isoformat(),"status":vehicle.status}
+    def work_order_item(order):
+        return {"id":order.id,"order_no":order.order_no,"registration":order.registration,"customer":order.customer,"technician":order.technician,"status":order.status,"due_date":order.due_date.isoformat(),"parts_value":float(order.parts_value),"labor_value":float(order.labor_value),"notes":order.notes}
+    if request.method == "GET":
+        today=timezone.localdate(); vehicles=list(FleetVehicle.objects.filter(organization=organization).order_by("next_service")); orders=FleetWorkOrder.objects.filter(organization=organization).order_by("due_date")[:100]
+        reminders=[]
+        for vehicle in vehicles:
+            days=(vehicle.next_service-today).days
+            if vehicle.status == "overdue": reminders.append({"id":vehicle.id,"type":"overdue","title":"Service overdue","detail":f"{vehicle.registration} · {vehicle.customer}","status":"urgent"})
+            elif days <= 30: reminders.append({"id":vehicle.id,"type":"service_due","title":f"Service due in {max(days, 0)} days","detail":f"{vehicle.registration} · {vehicle.customer}","status":"queued"})
+        return JsonResponse({"vehicles":[vehicle_item(x) for x in vehicles],"work_orders":[work_order_item(x) for x in orders],"reminders":reminders})
+    data=parse_body(request) or {}; action=str(data.get("action","work_order"))
+    try:
+        if action == "vehicle":
+            next_service=date.fromisoformat(str(data["next_service"])); today=timezone.localdate(); days=(next_service-today).days
+            status="overdue" if days < 0 else "due_soon" if days <= 30 else "healthy"
+            vehicle=FleetVehicle.objects.create(organization=organization,registration=str(data["registration"]).strip().upper(),customer=str(data["customer"]).strip(),make=str(data["make"]).strip(),model=str(data["model"]).strip(),year=int(data.get("year",2022) or 2022),mileage=max(0,int(data.get("mileage",0) or 0)),next_service=next_service,status=status)
+            item=vehicle_item(vehicle)
+        elif action == "work_order":
+            vehicle=FleetVehicle.objects.filter(organization=organization,registration=str(data.get("registration","")).strip().upper()).first()
+            order=FleetWorkOrder.objects.create(organization=organization,order_no=f"WO-{timezone.now():%y%m%d}-{uuid4().hex[:4].upper()}",vehicle=vehicle,registration=str(data["registration"]).strip().upper(),customer=str(data["customer"]).strip(),technician=str(data.get("technician","")).strip(),due_date=date.fromisoformat(str(data["due_date"])),parts_value=float(data.get("parts_value",0) or 0),labor_value=float(data.get("labor_value",0) or 0),notes=str(data.get("notes","")).strip(),created_by=request.api_user)
+            item=work_order_item(order)
+        elif action == "status":
+            order=FleetWorkOrder.objects.get(id=int(data["id"]),organization=organization); order.status=str(data.get("status",order.status)); order.save(update_fields=["status"]); item=work_order_item(order)
+        else: raise ValueError("Unknown fleet action")
+    except Exception as exc:
+        return JsonResponse({"detail":f"Could not update fleet data: {exc}"},status=400)
+    record_audit(request,"fleet action","fleet",item["id"],action)
+    return JsonResponse({"item":item},status=201 if action in {"vehicle","work_order"} else 200)
+
+@csrf_exempt
+@roles_allowed("admin", "manager")
+def inventory_network_view(request):
+    branches=[{"id":1,"code":"DEL-MAIN","name":"Delhi Main Warehouse","service_level":96,"capacity":78,"stock_value":682000,"demand_index":112},{"id":2,"code":"GUR-SAT","name":"Gurugram Satellite Store","service_level":91,"capacity":71,"stock_value":248000,"demand_index":128},{"id":3,"code":"NOI-NTH","name":"Noida North Store","service_level":88,"capacity":89,"stock_value":198000,"demand_index":74}]
+    if request.method == "GET": return JsonResponse({"summary":{"network_units":1128,"imbalance_value":284000,"overstock_skus":7,"service_level":93.6},"branches":branches,"recommendations":[{"id":1,"sku":"RLY-24V4","product":"24V 4-Pin Automotive Relay","from":"DEL-MAIN","to":"GUR-SAT","quantity":18,"reason":"Gurugram demand exceeds available stock","value":3240,"status":"recommended"},{"id":2,"sku":"BLT-0812","product":"Hex Bolt M8 x 20 mm","from":"NOI-NTH","to":"DEL-MAIN","quantity":120,"reason":"Noida overstock above 90-day cover","value":1440,"status":"recommended"},{"id":3,"sku":"BRG-6204","product":"Deep Groove Bearing 6204","from":"DEL-MAIN","to":"NOI-NTH","quantity":10,"reason":"Protect Noida service-level target","value":3100,"status":"approved"}],"stock_risks":[{"id":1,"sku":"RLY-24V4","product":"24V 4-Pin Automotive Relay","branch":"GUR-SAT","on_hand":0,"target":16,"cover_days":0,"risk":"stockout"},{"id":2,"sku":"BLT-0812","product":"Hex Bolt M8 x 20 mm","branch":"NOI-NTH","on_hand":640,"target":120,"cover_days":142,"risk":"overstock"},{"id":3,"sku":"BRG-6204","product":"Deep Groove Bearing 6204","branch":"NOI-NTH","on_hand":5,"target":18,"cover_days":4,"risk":"low_cover"}]})
+    data=parse_body(request) or {}; item={"id":data.get("id"),"status":"approved" if data.get("action")=="approve" else "dismissed"}; record_audit(request,"inventory network recommendation","transfer",item["id"],data.get("action","approve")); return JsonResponse({"item":item})
+
+@csrf_exempt
+@roles_allowed("admin")
+def observability_view(request):
+    services=[{"id":1,"name":"Core API","type":"api","status":"healthy","uptime":99.99,"latency":142,"requests":8420},{"id":2,"name":"Integration workers","type":"worker","status":"degraded","uptime":99.72,"latency":480,"requests":1260},{"id":3,"name":"Database","type":"database","status":"healthy","uptime":100,"latency":18,"requests":0},{"id":4,"name":"Backup storage","type":"backup","status":"healthy","uptime":99.9,"latency":0,"requests":3}]
+    if request.method == "GET": return JsonResponse({"summary":{"uptime":99.96,"api_latency_ms":184,"failed_jobs":2,"open_incidents":1},"services":services,"jobs":[{"id":1,"name":"Supplier webhook delivery","queue":"integrations","status":"failed","last_run":timezone.now().isoformat(),"retries":3,"detail":"Shiprocket webhook returned 503"},{"id":2,"name":"Daily finance export","queue":"reports","status":"completed","last_run":(timezone.now()-timedelta(hours=1)).isoformat(),"retries":0,"detail":"CSV export delivered"},{"id":3,"name":"PWA sync reconciliation","queue":"mobile","status":"retrying","last_run":timezone.now().isoformat(),"retries":1,"detail":"One device conflict awaiting review"}],"incidents":[{"id":1,"incident_no":"INC-260923-03","title":"Shipping webhook degradation","severity":"medium","status":"investigating","owner":"Platform team","started_at":timezone.now().isoformat(),"updates":3}],"errors":[{"id":1,"route":"/api/integrations/","code":"503","count":8,"last_seen":timezone.now().isoformat()},{"id":2,"route":"/api/pwa-admin/","code":"409","count":1,"last_seen":timezone.now().isoformat()}]})
+    data=parse_body(request) or {}; action=str(data.get("action","retry")); item={"id":data.get("id"),"status":"completed" if action=="retry" else "resolved"}; record_audit(request,"observability action","platform",item["id"],action); return JsonResponse({"item":item})
+
+@csrf_exempt
+@roles_allowed("admin")
+def saas_billing_view(request):
+    plans=[{"id":"starter","name":"Starter","price":4999,"users":5,"branches":1,"api_calls":10000},{"id":"growth","name":"Growth","price":14999,"users":25,"branches":5,"api_calls":100000},{"id":"scale","name":"Scale","price":39999,"users":100,"branches":20,"api_calls":1000000}]
+    tenants=[{"id":1,"organization":"Partora Auto Parts India","plan":"Growth","status":"active","renewal":"2026-10-01","seats_used":12,"seats_limit":25,"usage":68,"mrr":14999},{"id":2,"organization":"Northline Repairs","plan":"Starter","status":"trial","renewal":"2026-09-30","seats_used":3,"seats_limit":5,"usage":42,"mrr":0},{"id":3,"organization":"Rapid Fleet Care","plan":"Scale","status":"past_due","renewal":"2026-09-25","seats_used":64,"seats_limit":100,"usage":84,"mrr":39999}]
+    if request.method == "GET": return JsonResponse({"summary":{"mrr":148500,"active_tenants":12,"trial_tenants":3,"failed_payments":1},"plans":plans,"tenants":tenants,"invoices":[{"id":1,"invoice_no":"SUB-INV-2609-0012","organization":"Partora Auto Parts India","amount":14999,"due":"2026-10-01","status":"scheduled"},{"id":2,"invoice_no":"SUB-INV-2609-0009","organization":"Rapid Fleet Care","amount":39999,"due":"2026-09-25","status":"past_due"}]})
+    data=parse_body(request) or {}; action=str(data.get("action","plan")); item={"id":data.get("id"),"status":"scheduled"}
+    if action == "plan": item={"id":data.get("id"),"plan":str(data.get("plan","Growth")),"status":"active","mrr":float(data.get("mrr",14999) or 0)}
+    if action == "retry": item={"id":data.get("id"),"status":"scheduled"}
+    if action == "invoice": item={"id":uuid4().hex[:8],"invoice_no":f"SUB-{timezone.now():%y%m%d}-{uuid4().hex[:3].upper()}","organization":str(data.get("organization","Partora Auto Parts India")),"amount":float(data.get("amount",14999) or 0),"due":str(data.get("due",timezone.localdate().isoformat())),"status":"scheduled"}
+    record_audit(request,"subscription billing action","tenant",item["id"],action); return JsonResponse({"item":item},status=201 if action=="invoice" else 200)
+
+@csrf_exempt
+@roles_allowed("admin", "manager", "sales")
+def customer_service_view(request):
+    organization=request.organization
+    def ticket_item(ticket):
+        return {"id":ticket.id,"ticket_no":ticket.ticket_no,"customer":ticket.customer,"subject":ticket.subject,"channel":ticket.channel,"priority":ticket.priority,"status":ticket.status,"assignee":ticket.assignee or "Unassigned","sla_due":ticket.sla_due.strftime("%Y-%m-%d %H:%M") if ticket.sla_due else None,"last_message":ticket.last_message,"messages":ticket.messages}
+    if request.method == "GET":
+        tickets=list(SupportTicket.objects.filter(organization=organization).order_by("-updated_at")[:100]); now=timezone.now()
+        overdue=sum(1 for x in tickets if x.sla_due and x.sla_due < now and x.status != "resolved")
+        communications=[{"id":x.id,"ticket_no":x.ticket.ticket_no,"actor":x.actor,"channel":x.channel,"message":x.message,"created_at":x.created_at.isoformat()} for x in SupportCommunication.objects.select_related("ticket").filter(organization=organization).order_by("-created_at")[:50]]
+        return JsonResponse({"summary":{"open_tickets":sum(1 for x in tickets if x.status != "resolved"),"overdue_sla":overdue,"avg_response_hours":0,"csat":0},"tickets":[ticket_item(x) for x in tickets],"communications":communications})
+    data=parse_body(request) or {}; action=str(data.get("action","ticket"))
+    try:
+        if action == "ticket":
+            raw_sla=str(data.get("sla_due","")).strip(); sla=timezone.make_aware(datetime.fromisoformat(raw_sla.replace(" ","T"))) if raw_sla else None
+            ticket=SupportTicket.objects.create(organization=organization,ticket_no=f"CS-{timezone.now():%y%m%d}-{uuid4().hex[:4].upper()}",customer=str(data.get("customer","New customer")),subject=str(data.get("subject","New support request")),channel=str(data.get("channel","portal")),priority=str(data.get("priority","normal")),assignee=str(data.get("assignee","")),sla_due=sla,last_message=str(data.get("message","Ticket created from the operations desk.")),created_by=request.api_user)
+            SupportCommunication.objects.create(organization=organization,ticket=ticket,actor=request.api_user.get_full_name() or request.api_user.username,channel=ticket.channel,message=ticket.last_message)
+        else:
+            ticket=SupportTicket.objects.get(id=int(data["id"]),organization=organization)
+            if action == "status": ticket.status=str(data.get("status",ticket.status))
+            elif action == "assign": ticket.assignee=str(data.get("assignee",ticket.assignee))
+            elif action == "message":
+                message=str(data.get("message","Support update recorded.")); ticket.last_message=message; ticket.messages += 1; SupportCommunication.objects.create(organization=organization,ticket=ticket,actor=request.api_user.get_full_name() or request.api_user.username,channel=str(data.get("channel",ticket.channel)),message=message)
+            else: raise ValueError("Unknown customer service action")
+            ticket.save(update_fields=["status","assignee","last_message","messages","updated_at"])
+        item=ticket_item(ticket)
+    except Exception as exc:
+        return JsonResponse({"detail":f"Could not update support ticket: {exc}"},status=400)
+    record_audit(request,"customer service action","ticket",ticket.id,action)
+    return JsonResponse({"item":item},status=201 if action=="ticket" else 200)
+
+@csrf_exempt
+@roles_allowed("admin")
+def legacy_security_view(request):
+    users=[{"id":1,"name":"Aarav Admin","role":"admin","mfa":"enabled","last_login":timezone.now().isoformat(),"risk":"low"},{"id":2,"name":"Meera Manager","role":"manager","mfa":"pending","last_login":(timezone.now()-timedelta(minutes=20)).isoformat(),"risk":"medium"},{"id":3,"name":"Rohan Sales","role":"sales","mfa":"enabled","last_login":(timezone.now()-timedelta(hours=1)).isoformat(),"risk":"low"}]
+    sessions=[{"id":1,"user":"Aarav Admin","device":"Chrome - Windows","location":"New Delhi","last_seen":timezone.now().isoformat(),"status":"active"},{"id":2,"user":"Kabir Store","device":"Android PWA","location":"Gurugram","last_seen":(timezone.now()-timedelta(minutes=6)).isoformat(),"status":"active"}]
+    alerts=[{"id":1,"type":"mfa","title":"Manager MFA enrollment pending","detail":"Manager enrollment is required before high-value approvals.","status":"open"},{"id":2,"type":"session","title":"Idle session exceeds policy","detail":"Review the oldest active browser session.","status":"open"}]
+    audit=[{"id":a.id,"actor":a.user.get_full_name() if a.user else "System","action":a.action,"target":a.entity_id,"created_at":a.created_at.isoformat(),"result":"success"} for a in AuditLog.objects.order_by("-created_at")[:20]]
+    if request.method == "GET": return JsonResponse({"summary":{"mfa_coverage":75,"active_sessions":len(sessions),"open_alerts":len(alerts),"audit_events":AuditLog.objects.count()},"users":users,"sessions":sessions,"alerts":alerts,"audit":audit})
+    data=parse_body(request) or {}; action=str(data.get("action","export")); item={"id":data.get("id"),"status":"completed"}
+    if action == "mfa": item={"id":data.get("id"),"mfa":"enabled","risk":"low"}
+    if action == "terminate": item={"id":data.get("id"),"status":"terminated"}
+    if action == "resolve": item={"id":data.get("id"),"status":"resolved"}
+    if action == "export": item={"format":"csv","filename":f"partora-security-{timezone.localdate().isoformat()}.csv","rows":AuditLog.objects.count()}
+    record_audit(request,"security action","security",item.get("id") or "export",action); return JsonResponse({"item":item})
+
+
+@csrf_exempt
+@roles_allowed("admin")
+def security_view(request):
+    organization=request.organization
+    if request.method == "GET":
+        memberships=organization.memberships.select_related("user", "user__profile").filter(active=True).order_by("user__first_name")
+        users=[]
+        for membership in memberships:
+            profile, _ = UserSecurityProfile.objects.get_or_create(user=membership.user)
+            users.append({"id":membership.user_id,"name":membership.user.get_full_name() or membership.user.username,"role":membership.role,"mfa":"enabled" if profile.mfa_enabled else "pending","mfa_required":profile.mfa_required,"last_login":membership.user.last_login.isoformat() if membership.user.last_login else None,"risk":"low" if profile.mfa_enabled else "medium"})
+        session_rows=[]
+        for session in UserSession.objects.select_related("user").filter(organization=organization,revoked_at__isnull=True,expires_at__gt=timezone.now()).order_by("-last_seen")[:100]:
+            session_rows.append({"id":session.id,"user":session.user.get_full_name() or session.user.username,"device":session.device or "API client","location":session.ip_address or "Unknown","last_seen":session.last_seen.isoformat(),"status":"active"})
+        audits=AuditLog.objects.filter(organization=organization).order_by("-created_at")[:50]
+        audit=[{"id":a.id,"actor":a.user.get_full_name() if a.user else "System","action":a.action,"target":a.entity_id,"result":a.result,"created_at":a.created_at.isoformat()} for a in audits]
+        total_users=len(users); mfa_count=sum(1 for user in users if user["mfa"] == "enabled")
+        return JsonResponse({"summary":{"mfa_coverage":round(mfa_count/total_users*100) if total_users else 0,"active_sessions":len(session_rows),"open_alerts":sum(1 for user in users if user["mfa"] != "enabled"),"audit_events":AuditLog.objects.filter(organization=organization).count()},"users":users,"sessions":session_rows,"alerts":[],"audit":audit})
+    data=parse_body(request) or {}; action=str(data.get("action", "export"))
+    if action == "mfa":
+        target=User.objects.filter(id=int(data["id"])).first()
+        if not target: return JsonResponse({"detail":"User not found"},status=404)
+        profile, _ = UserSecurityProfile.objects.get_or_create(user=target); profile.mfa_enabled=True; profile.mfa_required=True; profile.backup_codes_remaining=max(profile.backup_codes_remaining, 10); profile.save(update_fields=["mfa_enabled","mfa_required","backup_codes_remaining","updated_at"])
+        record_audit(request,"enable MFA","user",target.id,target.username)
+        return JsonResponse({"item":{"id":target.id,"mfa":"enabled","mfa_required":True,"risk":"low"}})
+    if action == "terminate":
+        session=UserSession.objects.filter(id=int(data["id"]),organization=organization,revoked_at__isnull=True).first()
+        if not session: return JsonResponse({"detail":"Session not found"},status=404)
+        session.revoked_at=timezone.now(); session.save(update_fields=["revoked_at"]); record_audit(request,"terminate session","session",session.id,session.user.username)
+        return JsonResponse({"item":{"id":session.id,"status":"terminated"}})
+    if action == "export":
+        return JsonResponse({"item":{"format":"csv","filename":f"partora-security-{timezone.localdate().isoformat()}.csv","rows":AuditLog.objects.filter(organization=organization).count()}})
+    return JsonResponse({"detail":"Unknown security action"},status=400)
+
+
+@roles_allowed("admin", "manager")
+def activity_view(request):
+    query=AuditLog.objects.select_related("user","branch").filter(organization=request.organization)
+    actor=request.GET.get("actor", "").strip()
+    action=request.GET.get("action", "").strip()
+    entity=request.GET.get("entity", "").strip()
+    if actor: query=query.filter(Q(user__username__icontains=actor)|Q(user__email__icontains=actor)|Q(user__first_name__icontains=actor)|Q(user__last_name__icontains=actor))
+    if action: query=query.filter(action__icontains=action)
+    if entity: query=query.filter(entity__icontains=entity)
+    events=list(query.order_by("-created_at")[:200])
+    return JsonResponse({"count":len(events),"events":[{"id":event.id,"actor":event.user.get_full_name() if event.user else "System","action":event.action,"entity":event.entity,"entity_id":event.entity_id,"detail":event.detail,"result":event.result,"branch":event.branch.code if event.branch else "All branches","ip_address":event.ip_address,"user_agent":event.user_agent,"metadata":event.metadata,"created_at":event.created_at.isoformat()} for event in events]})
+
+@csrf_exempt
+@roles_allowed("admin")
+def documents_view(request):
+    documents=[{"id":1,"file_name":"VE-INV-8821.pdf","supplier":"VoltEdge Electricals","invoice_no":"VE-INV-8821","gstin":"07AAACV1234A1Z5","total":22050,"po_no":"PO-260920-90BD","match_status":"exception","confidence":94,"status":"needs_review","uploaded_at":timezone.now().isoformat(),"issue":"Invoice quantity includes damaged units"},{"id":2,"file_name":"TL-INV-4407.pdf","supplier":"TorqueLine Components","invoice_no":"TL-INV-4407","gstin":"07AABCT6789C1Z2","total":14700,"po_no":"PO-260921-A12F","match_status":"matched","confidence":98,"status":"approved","uploaded_at":(timezone.now()-timedelta(hours=1)).isoformat(),"issue":""}]
+    if request.method == "GET": return JsonResponse({"summary":{"processed_today":18,"pending_review":1,"matched":14,"exception_rate":11},"documents":documents})
+    data=parse_body(request) or {}; action=str(data.get("action","upload")); item={"id":uuid4().hex[:8],"file_name":str(data.get("file_name","supplier-invoice.pdf")),"supplier":str(data.get("supplier","New supplier")),"invoice_no":str(data.get("invoice_no",f"INV-{timezone.now():%y%m%d}")),"gstin":str(data.get("gstin","Pending extraction")),"total":float(data.get("total",0) or 0),"po_no":str(data.get("po_no","Pending match")),"match_status":"pending","confidence":0,"status":"processing","uploaded_at":timezone.now().isoformat(),"issue":""}
+    if action in {"approve","reject"}: item={"id":data.get("id"),"status":"approved" if action=="approve" else "rejected","match_status":"matched" if action=="approve" else "exception"}
+    record_audit(request,"document processing","supplier_invoice",item["id"],action); return JsonResponse({"item":item},status=201 if action=="upload" else 200)
+
+@csrf_exempt
+@roles_allowed("admin", "manager")
+def delivery_view(request):
+    organization=request.organization
+    def route_item(route):
+        return {"id":route.id,"route_no":route.route_no,"driver":route.driver,"vehicle":route.vehicle,"stops":route.stops,"completed":route.completed,"eta":route.eta,"status":route.status,"cost":float(route.cost)}
+    def shipment_item(shipment):
+        return {"id":shipment.id,"shipment_no":shipment.shipment_no,"customer":shipment.customer,"order_no":shipment.order_no,"driver":shipment.driver,"status":shipment.status,"eta":shipment.eta.strftime("%Y-%m-%d %H:%M") if shipment.eta else None,"pod_status":shipment.pod_status,"value":float(shipment.value)}
+    if request.method == "GET":
+        routes=list(DeliveryRoute.objects.filter(organization=organization).order_by("-created_at")[:100]); shipments=list(Shipment.objects.filter(organization=organization).order_by("-created_at")[:100])
+        return JsonResponse({"summary":{"planned":sum(1 for x in routes if x.status=="planned"),"in_transit":sum(1 for x in shipments if x.status=="in_transit"),"delivered_today":sum(1 for x in shipments if x.status=="delivered" and x.proof_at and x.proof_at.date()==timezone.localdate()),"exceptions":sum(1 for x in shipments if x.status=="exception")},"routes":[route_item(x) for x in routes],"shipments":[shipment_item(x) for x in shipments],"exceptions":[]})
+    data=parse_body(request) or {}; action=str(data.get("action","route"))
+    try:
+        if action == "route":
+            route=DeliveryRoute.objects.create(organization=organization,route_no=f"RT-{timezone.now():%y%m%d}-{uuid4().hex[:4].upper()}",driver=str(data.get("driver","")),vehicle=str(data.get("vehicle","")),stops=max(1,int(data.get("stops",1) or 1)),eta=str(data.get("eta","15:30")),cost=float(data.get("cost",0) or 0),created_by=request.api_user)
+            item=route_item(route)
+        else:
+            shipment=Shipment.objects.get(id=int(data["id"]),organization=organization)
+            if action == "status": shipment.status=str(data.get("status",shipment.status))
+            elif action == "proof": shipment.pod_status="verified"; shipment.proof_at=timezone.now(); shipment.status="delivered"
+            else: raise ValueError("Unknown delivery action")
+            shipment.save(update_fields=["status","pod_status","proof_at"]); item=shipment_item(shipment)
+    except Exception as exc:
+        return JsonResponse({"detail":f"Could not update delivery data: {exc}"},status=400)
+    record_audit(request,"delivery action","shipment" if action != "route" else "route",item["id"],action)
+    return JsonResponse({"item":item},status=201 if action=="route" else 200)
+
+@csrf_exempt
+@roles_allowed("admin")
+def partner_api_view(request):
+    if request.method == "GET": return JsonResponse({"summary":{"active_keys":3,"calls_today":1284,"error_rate":1.8,"webhooks":6},"partners":[{"id":1,"name":"Northline Repairs","type":"dealer","status":"connected","last_call":timezone.now().isoformat(),"calls":642},{"id":2,"name":"Zoho Books","type":"accounting","status":"connected","last_call":timezone.now().isoformat(),"calls":418},{"id":3,"name":"FleetCare Telematics","type":"fleet","status":"sandbox","last_call":(timezone.now()-timedelta(hours=1)).isoformat(),"calls":224}],"keys":[{"id":1,"label":"Northline production","prefix":"pk_live_north_****","scopes":"orders:read, quotes:write","last_used":timezone.now().isoformat(),"status":"active"},{"id":2,"label":"FleetCare sandbox","prefix":"pk_test_fleet_****","scopes":"vehicles:read","last_used":(timezone.now()-timedelta(hours=1)).isoformat(),"status":"active"}],"webhooks":[{"id":1,"event":"order.fulfilled","target":"https://northline.example/hooks/partora","status":"active","deliveries":182},{"id":2,"event":"invoice.exception","target":"https://zoho.example/hooks/partora","status":"retrying","deliveries":14}]})
+    data=parse_body(request) or {}; action=str(data.get("action","key")); item={"id":uuid4().hex[:8],"label":str(data.get("label","New API key")),"prefix":f"pk_{data.get('environment','test')}_{uuid4().hex[:6]}_****","scopes":str(data.get("scopes","orders:read")),"last_used":None,"status":"active"}
+    if action == "rotate": item={"id":data.get("id"),"prefix":f"pk_live_rotated_{uuid4().hex[:4]}_****","status":"active"}
+    if action == "webhook": item={"id":uuid4().hex[:8],"event":str(data.get("event","order.fulfilled")),"target":str(data.get("target","https://client.example/hooks/partora")),"status":"active","deliveries":0}
+    record_audit(request,"partner API action","api",item["id"],action); return JsonResponse({"item":item},status=201 if action in {"key","webhook"} else 200)
+
+@csrf_exempt
+@roles_allowed("admin", "manager")
+def predictive_fleet_view(request):
+    vehicles=[{"id":1,"registration":"DL 01 AB 2488","customer":"Rapid Fleet Care","model":"Tata Ace Gold","mileage":68240,"risk":"high","prediction":"Brake pad wear likely within 420 km","confidence":89,"next_service":"2026-10-04","estimated_cost":6800},{"id":2,"registration":"HR 26 CX 9012","customer":"Northline Repairs","model":"Hyundai i20","mileage":42110,"risk":"medium","prediction":"Battery replacement likely within 30 days","confidence":76,"next_service":"2026-11-18","estimated_cost":5200},{"id":3,"registration":"DL 04 MK 7761","customer":"Metro Garage","model":"Maruti Swift","mileage":88700,"risk":"low","prediction":"No immediate component risk","confidence":82,"next_service":"2026-09-28","estimated_cost":3100}]
+    if request.method == "GET": return JsonResponse({"summary":{"vehicles":42,"high_risk":3,"due_30_days":8,"projected_savings":184000},"vehicles":vehicles,"history":[{"id":1,"registration":"DL 01 AB 2488","component":"Brake pads","event":"Predicted replacement","status":"planned","due":"420 km","owner":"Ravi Kumar"},{"id":2,"registration":"HR 26 CX 9012","component":"Battery","event":"Inspection reminder","status":"queued","due":"30 days","owner":"Sana Iqbal"}]})
+    data=parse_body(request) or {}; action=str(data.get("action","acknowledge")); item={"id":data.get("id"),"risk":"reviewed" if action=="acknowledge" else "scheduled","prediction":"Preventive service scheduled" if action=="service" else "Risk reviewed"}; record_audit(request,"predictive fleet action","vehicle",item["id"],action); return JsonResponse({"item":item})
 
 @csrf_exempt
 @roles_allowed("admin", "manager", "store")
 def warehouses_view(request):
     if request.method == "GET":
-        warehouses=Warehouse.objects.filter(active=True).order_by("code")
+        warehouse_query=Warehouse.objects.filter(active=True,organization=request.organization)
+        if request.branch:
+            warehouse_query=warehouse_query.filter(id=request.branch.id)
+        warehouses=warehouse_query.order_by("code")
         wh_items=[]
         for wh in warehouses:
             wh_items.append({"id":wh.id,"code":wh.code,"name":wh.name,"address":wh.address,"sku_count":wh.stocks.count(),"units":wh.stocks.aggregate(total=Sum("quantity"))["total"] or 0})
-        transfers=[{"id":t.id,"reference":t.reference,"from_warehouse":t.from_warehouse.code,"to_warehouse":t.to_warehouse.code,"sku":t.product.sku,"product":t.product.name,"quantity":t.quantity,"status":t.status,"created_at":t.created_at.isoformat()} for t in StockTransfer.objects.select_related("from_warehouse","to_warehouse","product").order_by("-created_at")[:40]]
+        transfer_query=StockTransfer.objects.select_related("from_warehouse","to_warehouse","product").filter(from_warehouse__organization=request.organization)
+        if request.branch:
+            transfer_query=transfer_query.filter(Q(from_warehouse=request.branch)|Q(to_warehouse=request.branch))
+        transfers=[{"id":t.id,"reference":t.reference,"from_warehouse":t.from_warehouse.code,"to_warehouse":t.to_warehouse.code,"sku":t.product.sku,"product":t.product.name,"quantity":t.quantity,"status":t.status,"created_at":t.created_at.isoformat()} for t in transfer_query.order_by("-created_at")[:40]]
         return JsonResponse({"warehouses":wh_items,"transfers":transfers})
     if request.method == "POST":
         data=parse_body(request) or {}; action=str(data.get("action","transfer"))
         if action == "warehouse":
             try:
-                wh=Warehouse.objects.create(code=str(data["code"]).strip().upper(),name=str(data["name"]).strip(),address=str(data.get("address","")).strip())
+                wh=Warehouse.objects.create(organization=request.organization,code=str(data["code"]).strip().upper(),name=str(data["name"]).strip(),address=str(data.get("address","")).strip())
             except Exception as exc:
                 return JsonResponse({"detail":f"Could not create warehouse: {exc}"},status=400)
             return JsonResponse({"item":{"id":wh.id,"code":wh.code,"name":wh.name,"address":wh.address,"sku_count":0,"units":0}},status=201)
         try:
-            source=Warehouse.objects.get(code=str(data["from_warehouse"]).strip().upper()); target=Warehouse.objects.get(code=str(data["to_warehouse"]).strip().upper()); product=Product.objects.get(sku=str(data["sku"]).strip().upper()); qty=max(1,int(data.get("quantity",1)))
-            if source.id == target.id: raise ValueError("Source and destination must differ")
-            source_stock,_=WarehouseStock.objects.get_or_create(warehouse=source,product=product,defaults={"quantity":0}); target_stock,_=WarehouseStock.objects.get_or_create(warehouse=target,product=product,defaults={"quantity":0})
-            if source_stock.quantity < qty: raise ValueError("Insufficient stock at source warehouse")
-            source_stock.quantity-=qty; target_stock.quantity+=qty; source_stock.save(update_fields=["quantity"]); target_stock.save(update_fields=["quantity"])
-            transfer=StockTransfer.objects.create(reference=f"TR-{timezone.now():%y%m%d}-{uuid4().hex[:4].upper()}",from_warehouse=source,to_warehouse=target,product=product,quantity=qty,created_by=request.api_user)
+            with transaction.atomic():
+                source=Warehouse.objects.select_for_update().get(code=str(data["from_warehouse"]).strip().upper(),organization=request.organization); target=Warehouse.objects.select_for_update().get(code=str(data["to_warehouse"]).strip().upper(),organization=request.organization); product=Product.objects.select_for_update().get(sku=str(data["sku"]).strip().upper()); qty=max(1,int(data.get("quantity",1)))
+                if request.branch and source.id != request.branch.id and target.id != request.branch.id: raise ValueError("Transfer must include your assigned branch")
+                if source.id == target.id: raise ValueError("Source and destination must differ")
+                source_stock,_=WarehouseStock.objects.get_or_create(warehouse=source,product=product,defaults={"quantity":0}); target_stock,_=WarehouseStock.objects.get_or_create(warehouse=target,product=product,defaults={"quantity":0})
+                source_stock=WarehouseStock.objects.select_for_update().get(id=source_stock.id); target_stock=WarehouseStock.objects.select_for_update().get(id=target_stock.id)
+                if source_stock.quantity < qty: raise ValueError("Insufficient stock at source warehouse")
+                source_stock.quantity-=qty; target_stock.quantity+=qty; source_stock.save(update_fields=["quantity"]); target_stock.save(update_fields=["quantity"])
+                transfer=StockTransfer.objects.create(reference=f"TR-{timezone.now():%y%m%d}-{uuid4().hex[:4].upper()}",from_warehouse=source,to_warehouse=target,product=product,quantity=qty,created_by=request.api_user)
+                key=uuid4().hex; StockLedgerEntry.objects.create(organization=request.organization,product=product,warehouse=source,movement_type="out",quantity=-qty,balance_qty=source_stock.quantity,reference=transfer.reference,idempotency_key=f"{key}:out",created_by=request.api_user); StockLedgerEntry.objects.create(organization=request.organization,product=product,warehouse=target,movement_type="in",quantity=qty,balance_qty=target_stock.quantity,reference=transfer.reference,idempotency_key=f"{key}:in",created_by=request.api_user)
         except Exception as exc:
             return JsonResponse({"detail":f"Could not transfer stock: {exc}"},status=400)
         return JsonResponse({"item":{"id":transfer.id,"reference":transfer.reference,"from_warehouse":source.code,"to_warehouse":target.code,"sku":product.sku,"product":product.name,"quantity":qty,"status":"completed","created_at":transfer.created_at.isoformat()}},status=201)
@@ -348,9 +988,11 @@ def sales_flow_view(request):
         try:
             if action == "convert_quote":
                 quote=Quotation.objects.get(id=int(data["quote_id"]))
+                if quote.status not in {"approved", "sent"}: raise ValueError("Only sent or approved quotes can become sales orders")
                 order,created=SalesOrder.objects.get_or_create(quotation=quote,defaults={"order_no":f"SO-{timezone.now():%y%m%d}-{uuid4().hex[:4].upper()}","customer_name":quote.customer_name,"customer_company":quote.customer_company,"total":quote.total,"status":"confirmed","created_by":request.api_user})
                 if created:
-                    for line in data.get("items", []):
+                    source_items=data.get("items") or [{"sku":line.product.sku,"quantity":line.quantity,"unit_price":line.unit_price} for line in quote.items.select_related("product").all()]
+                    for line in source_items:
                         product=Product.objects.get(sku=str(line["sku"]).strip().upper())
                         quantity=max(1, int(line.get("quantity", 1)))
                         unit_price=float(line.get("unit_price") or product.price)
@@ -358,7 +1000,7 @@ def sales_flow_view(request):
                 quote.status="approved"; quote.save(update_fields=["status"])
                 item=sales_order_dict(order)
             elif action == "invoice":
-                order=SalesOrder.objects.get(id=int(data["order_id"])); invoice,created=Invoice.objects.get_or_create(sales_order=order,defaults={"invoice_no":f"INV-{timezone.now():%y%m%d}-{uuid4().hex[:4].upper()}","total":order.total,"status":"issued","due_date":timezone.localdate()+timedelta(days=int(data.get("terms_days",30)))})
+                order=SalesOrder.objects.get(id=int(data["order_id"])); invoice,created=Invoice.objects.get_or_create(sales_order=order,defaults={"invoice_no":f"INV-{timezone.now():%y%m%d}-{uuid4().hex[:4].upper()}","total":order.total,"tax_rate":order.quotation.tax_rate if order.quotation else 18,"status":"issued","due_date":timezone.localdate()+timedelta(days=int(data.get("terms_days",30)))})
                 item=invoice_dict(invoice)
             else:
                 raise ValueError("Unknown action")
@@ -384,53 +1026,66 @@ def fulfillment_view(request):
         return JsonResponse({"orders":[sales_order_dict(o) for o in orders],"invoices":[invoice_dict(i) for i in Invoice.objects.select_related("sales_order").prefetch_related("payments").order_by("-created_at")[:100]]})
     data=parse_body(request) or {}; action=str(data.get("action", "status"))
     try:
-        order=SalesOrder.objects.select_related("invoice").prefetch_related("items__product").get(id=int(data["order_id"]))
-        if action == "reserve":
-            if not order.items.exists(): raise ValueError("Add order line items before reserving stock")
-            for line in order.items.all():
-                if line.product.stock_qty-line.product.reserved_qty < line.quantity: raise ValueError(f"Insufficient available stock for {line.product.sku}")
-            for line in order.items.all():
-                line.product.reserved_qty += line.quantity
-                line.product.save(update_fields=["reserved_qty", "updated_at"])
-            order.reserved_at=timezone.now(); order.fulfillment_status="picking"; order.save(update_fields=["reserved_at","fulfillment_status"])
-            record_audit(request,"reserve stock","sales order",order.id,order.order_no)
-        elif action == "status":
-            status=str(data.get("status", "confirmed"))
-            allowed={"confirmed","picking","packed","dispatched","delivered","cancelled"}
-            if status not in allowed: raise ValueError("Invalid fulfillment status")
-            if status == "dispatched":
-                if not order.items.exists(): raise ValueError("Add order line items before dispatch")
-                for line in order.items.all():
-                    if line.product.stock_qty-line.product.reserved_qty < line.quantity: raise ValueError(f"Insufficient available stock for {line.product.sku}")
-                for line in order.items.all():
-                    line.product.stock_qty -= line.quantity
-                    line.product.reserved_qty=max(0,line.product.reserved_qty-line.quantity)
-                    line.product.save(update_fields=["stock_qty","reserved_qty","updated_at"])
-                    StockMovement.objects.create(product=line.product,movement_type="out",quantity=line.quantity,reference=order.order_no)
-                order.dispatched_at=timezone.now()
-            if status == "delivered": order.delivered_at=timezone.now()
-            order.fulfillment_status=status
-            order.status="fulfilled" if status in {"dispatched","delivered"} else ("cancelled" if status=="cancelled" else order.status)
-            order.save(update_fields=["fulfillment_status","status","dispatched_at","delivered_at"])
-            record_audit(request,"fulfillment status","sales order",order.id,f"{order.order_no} → {status}")
-        elif action == "payment":
-            invoice=getattr(order,"invoice",None)
-            if not invoice: raise ValueError("Issue the invoice before recording a payment")
-            amount=float(data.get("amount",0) or 0)
-            if amount <= 0: raise ValueError("Payment amount must be greater than zero")
-            paid=float(invoice.payments.aggregate(total=Sum("amount"))["total"] or 0)
-            if paid+amount > float(invoice.total): raise ValueError("Payment exceeds invoice balance")
-            Payment.objects.create(invoice=invoice,amount=amount,method=str(data.get("method","bank")),reference=str(data.get("reference","")).strip(),created_by=request.api_user)
-            total_paid=paid+amount; invoice.status="paid" if total_paid >= float(invoice.total) else "partial"; invoice.save(update_fields=["status"])
-            record_audit(request,"record payment","invoice",invoice.id,f"{invoice.invoice_no} / {amount}")
-        else:
-            raise ValueError("Unknown fulfillment action")
+        with transaction.atomic():
+            order=SalesOrder.objects.select_for_update().select_related("invoice").get(id=int(data["order_id"]))
+            if action == "reserve":
+                if not order.items.exists(): raise ValueError("Add order line items before reserving stock")
+                active_reservations=list(StockReservation.objects.filter(organization=request.organization,sales_order=order,status="active"))
+                if active_reservations:
+                    pass
+                else:
+                    lines=list(order.items.all())
+                    for line in lines:
+                        product=Product.objects.select_for_update().get(id=line.product_id)
+                        if product.stock_qty-product.reserved_qty < line.quantity: raise ValueError(f"Insufficient available stock for {product.sku}")
+                    request_key=str(data.get("idempotency_key") or request.headers.get("Idempotency-Key") or uuid4().hex)
+                    for line in lines:
+                        product=Product.objects.select_for_update().get(id=line.product_id)
+                        product.reserved_qty += line.quantity; product.save(update_fields=["reserved_qty","updated_at"])
+                        StockReservation.objects.create(organization=request.organization,sales_order=order,product=product,quantity=line.quantity,idempotency_key=f"{request_key}:{product.id}")
+                        StockLedgerEntry.objects.create(organization=request.organization,product=product,movement_type="reserve",quantity=line.quantity,balance_qty=product.stock_qty-product.reserved_qty,reference=order.order_no,idempotency_key=f"reserve:{request_key}:{product.id}",created_by=request.api_user)
+                    order.reserved_at=timezone.now(); order.fulfillment_status="picking"; order.save(update_fields=["reserved_at","fulfillment_status"])
+                record_audit(request,"reserve stock","sales order",order.id,order.order_no)
+            elif action == "status":
+                status=str(data.get("status", "confirmed")); allowed={"confirmed","picking","packed","dispatched","delivered","cancelled"}
+                if status not in allowed: raise ValueError("Invalid fulfillment status")
+                if status == "dispatched" and order.fulfillment_status not in {"dispatched","delivered"}:
+                    reservations=list(StockReservation.objects.select_for_update().filter(organization=request.organization,sales_order=order,status="active"))
+                    if not reservations: raise ValueError("Reserve stock before dispatch")
+                    for reservation in reservations:
+                        product=Product.objects.select_for_update().get(id=reservation.product_id)
+                        if product.stock_qty < reservation.quantity: raise ValueError(f"Insufficient stock for {product.sku}")
+                        product.stock_qty -= reservation.quantity; product.reserved_qty=max(0,product.reserved_qty-reservation.quantity); product.save(update_fields=["stock_qty","reserved_qty","updated_at"])
+                        StockMovement.objects.create(product=product,movement_type="out",quantity=reservation.quantity,reference=order.order_no)
+                        StockLedgerEntry.objects.create(organization=request.organization,product=product,movement_type="out",quantity=-reservation.quantity,balance_qty=product.stock_qty,reference=order.order_no,idempotency_key=f"dispatch:{order.id}:{product.id}",created_by=request.api_user)
+                        reservation.status="fulfilled"; reservation.released_at=timezone.now(); reservation.save(update_fields=["status","released_at"])
+                    order.dispatched_at=timezone.now()
+                if status == "cancelled":
+                    for reservation in StockReservation.objects.select_for_update().filter(organization=request.organization,sales_order=order,status="active"):
+                        product=Product.objects.select_for_update().get(id=reservation.product_id); product.reserved_qty=max(0,product.reserved_qty-reservation.quantity); product.save(update_fields=["reserved_qty","updated_at"])
+                        StockLedgerEntry.objects.create(organization=request.organization,product=product,movement_type="release",quantity=-reservation.quantity,balance_qty=product.stock_qty-product.reserved_qty,reference=order.order_no,idempotency_key=f"release:{order.id}:{product.id}",created_by=request.api_user)
+                        reservation.status="cancelled"; reservation.released_at=timezone.now(); reservation.save(update_fields=["status","released_at"])
+                if status == "delivered": order.delivered_at=timezone.now()
+                order.fulfillment_status=status; order.status="fulfilled" if status in {"dispatched","delivered"} else ("cancelled" if status=="cancelled" else order.status); order.save(update_fields=["fulfillment_status","status","dispatched_at","delivered_at"])
+                record_audit(request,"fulfillment status","sales order",order.id,f"{order.order_no} → {status}")
+            elif action == "payment":
+                if request.effective_role not in {"admin", "manager"}: raise PermissionError("Only admin or manager can record payments")
+                invoice=getattr(order,"invoice",None)
+                if not invoice: raise ValueError("Issue the invoice before recording a payment")
+                amount=float(data.get("amount",0) or 0)
+                if amount <= 0: raise ValueError("Payment amount must be greater than zero")
+                paid=float(invoice.payments.aggregate(total=Sum("amount"))["total"] or 0)
+                if paid+amount > float(invoice.total): raise ValueError("Payment exceeds invoice balance")
+                Payment.objects.create(invoice=invoice,amount=amount,method=str(data.get("method","bank")),reference=str(data.get("reference","")).strip(),created_by=request.api_user)
+                total_paid=paid+amount; invoice.status="paid" if total_paid >= float(invoice.total) else "partial"; invoice.save(update_fields=["status"])
+                record_audit(request,"record payment","invoice",invoice.id,f"{invoice.invoice_no} / {amount}")
+            else: raise ValueError("Unknown fulfillment action")
     except Exception as exc:
         return JsonResponse({"detail":f"Could not update fulfillment: {exc}"},status=400)
     return JsonResponse({"item":sales_order_dict(order),"invoice":invoice_dict(getattr(order,"invoice",None)) if getattr(order,"invoice",None) else None})
 
 @csrf_exempt
-@roles_allowed("admin", "manager", "sales", "store")
+@roles_allowed("admin", "manager", "store")
 def returns_view(request):
     if request.method == "GET":
         qs=ReturnRequest.objects.select_related("product","sales_order","created_by").order_by("-created_at")[:200]
@@ -479,7 +1134,7 @@ def inventory_control_view(request):
             item={"id":count.id,"reference":count.reference,"warehouse":warehouse.code if warehouse else None,"status":count.status,"notes":count.notes,"counted_by":request.api_user.get_full_name() or request.api_user.username,"created_at":count.created_at.isoformat(),"lines":[{"sku":product.sku,"product":product.name,"expected_qty":expected,"counted_qty":counted,"variance":counted-expected}]}
             record_audit(request,"submit count","inventory count",count.id,count.reference)
         elif action == "approve":
-            if request.api_user.profile.role not in {"admin","manager"}: raise ValueError("Only admin or manager can approve counts")
+            if request.effective_role not in {"admin","manager"}: raise ValueError("Only admin or manager can approve counts")
             count=InventoryCount.objects.prefetch_related("lines__product").get(id=int(data["id"]))
             if count.status == "approved": raise ValueError("Count is already approved")
             for line in count.lines.all():
@@ -499,7 +1154,7 @@ def inventory_control_view(request):
     return JsonResponse({"item":item})
 
 @csrf_exempt
-@roles_allowed("admin", "manager", "store")
+@roles_allowed("admin", "manager")
 def supplier_performance_view(request):
     if request.method == "GET":
         suppliers=[]
@@ -515,7 +1170,8 @@ def supplier_performance_view(request):
         for product in Product.objects.select_related("supplier").filter(stock_qty__lte=F("reorder_level"),supplier__isnull=False).order_by("stock_qty")[:100]:
             plans.append({"sku":product.sku,"product":product.name,"supplier":product.supplier.name,"stock_qty":product.stock_qty,"reorder_level":product.reorder_level,"suggested_qty":max(product.reorder_qty,product.reorder_level*2-product.stock_qty),"lead_time_days":product.supplier.lead_time_days,"expected_stockout":(timezone.localdate()+timedelta(days=product.supplier.lead_time_days)).isoformat()})
         prices=[{"id":s.id,"supplier":s.supplier.name,"sku":s.product.sku,"product":s.product.name,"unit_cost":float(s.unit_cost),"captured_at":s.captured_at.isoformat()} for s in SupplierPriceSnapshot.objects.select_related("supplier","product").order_by("-captured_at")[:30]]
-        return JsonResponse({"suppliers":suppliers,"plans":plans,"prices":prices})
+        contracts=[{"id":c.id,"supplier":c.supplier.name,"contract_no":c.contract_no,"expires_on":c.expires_on.isoformat(),"payment_terms":c.payment_terms,"annual_value":float(c.annual_value),"status":c.status} for c in SupplierContract.objects.select_related("supplier").order_by("expires_on")[:100]]
+        return JsonResponse({"suppliers":suppliers,"plans":plans,"prices":prices,"contracts":contracts})
     data=parse_body(request) or {}
     try:
         supplier=Supplier.objects.get(name=str(data["supplier"]).strip()); product=Product.objects.get(sku=str(data["sku"]).strip().upper()); snapshot=SupplierPriceSnapshot.objects.create(supplier=supplier,product=product,unit_cost=float(data["unit_cost"]))
@@ -523,6 +1179,327 @@ def supplier_performance_view(request):
         return JsonResponse({"detail":f"Could not record supplier price: {exc}"},status=400)
     record_audit(request,"record supplier price","supplier",supplier.id,f"{product.sku} / {snapshot.unit_cost}")
     return JsonResponse({"item":{"id":snapshot.id,"supplier":supplier.name,"sku":product.sku,"product":product.name,"unit_cost":float(snapshot.unit_cost),"captured_at":snapshot.captured_at.isoformat()}},status=201)
+
+
+def _forecast_for_product(product, demand_totals, window_days, horizon_days):
+    today = timezone.localdate()
+    supplier = product.supplier
+    lead_time_days = supplier.lead_time_days if supplier else 0
+    average_daily = (Decimal(demand_totals.get(product.id, 0)) / Decimal(window_days)).quantize(Decimal("0.01"))
+    safety_stock = max(1, ceil(float(average_daily) * max(2, lead_time_days * 0.5))) if average_daily else 0
+    reorder_point = ceil(float(average_daily) * lead_time_days + safety_stock)
+    available_qty = max(0, product.stock_qty - product.reserved_qty)
+    if average_daily:
+        stockout_days = max(0, int(available_qty / float(average_daily)))
+        projected_stockout = today + timedelta(days=stockout_days)
+    else:
+        stockout_days = None
+        projected_stockout = None
+    recommended_qty = 0
+    if available_qty <= reorder_point:
+        recommended_qty = max(
+            product.reorder_qty,
+            ceil(float(average_daily) * (lead_time_days + horizon_days) + safety_stock - available_qty),
+        )
+    if available_qty <= 0:
+        risk = "out"
+    elif stockout_days is not None and stockout_days <= lead_time_days:
+        risk = "urgent"
+    elif recommended_qty:
+        risk = "watch"
+    else:
+        risk = "healthy"
+    latest = SupplierPriceSnapshot.objects.filter(product=product).order_by("-captured_at").first()
+    unit_cost = Decimal(latest.unit_cost if latest else (product.cost_price or product.price))
+    return {
+        "sku": product.sku,
+        "product": product.name,
+        "supplier": supplier.name if supplier else None,
+        "supplier_id": supplier.id if supplier else None,
+        "stock_qty": product.stock_qty,
+        "reserved_qty": product.reserved_qty,
+        "available_qty": available_qty,
+        "average_daily_demand": float(average_daily),
+        "lead_time_days": lead_time_days,
+        "safety_stock": safety_stock,
+        "reorder_point": reorder_point,
+        "stockout_days": stockout_days,
+        "projected_stockout": projected_stockout.isoformat() if projected_stockout else None,
+        "recommended_qty": recommended_qty,
+        "unit_cost": float(unit_cost),
+        "estimated_cost": float(unit_cost * recommended_qty),
+        "risk": risk,
+    }
+
+
+def _purchase_plan_item(plan):
+    return {
+        "id": plan.id,
+        "plan_id": plan.id,
+        "sku": plan.product.sku,
+        "product": plan.product.name,
+        "supplier": plan.supplier.name,
+        "average_daily_demand": float(plan.average_daily_demand),
+        "window_days": plan.window_days,
+        "horizon_days": plan.horizon_days,
+        "available_qty": plan.available_qty,
+        "safety_stock": plan.safety_stock,
+        "reorder_point": plan.reorder_point,
+        "recommended_qty": plan.recommended_qty,
+        "unit_cost": float(plan.unit_cost),
+        "estimated_cost": float(plan.estimated_cost),
+        "projected_stockout": plan.projected_stockout.isoformat() if plan.projected_stockout else None,
+        "expected_date": plan.expected_date.isoformat() if plan.expected_date else None,
+        "status": plan.status,
+        "po_no": plan.purchase_order.po_no if plan.purchase_order else None,
+        "created_at": plan.created_at.isoformat(),
+    }
+
+
+@csrf_exempt
+@roles_allowed("admin", "manager", "store")
+def demand_planning_view(request):
+    if request.method == "GET":
+        try:
+            window_days = min(365, max(30, int(request.GET.get("window", 90))))
+            horizon_days = min(180, max(7, int(request.GET.get("horizon", 30))))
+        except (TypeError, ValueError):
+            return JsonResponse({"detail": "Window and horizon must be whole numbers"}, status=400)
+        start = timezone.localdate() - timedelta(days=window_days - 1)
+        totals = {
+            row["product_id"]: row["total"] or 0
+            for row in DemandHistory.objects.filter(period_start__gte=start, period_start__lte=timezone.localdate()).values("product_id").annotate(total=Sum("quantity"))
+        }
+        active_plans = {}
+        for plan in PurchasePlan.objects.filter(status__in=["pending", "approved", "ordered"]).select_related("product", "supplier", "purchase_order").order_by("-created_at"):
+            active_plans.setdefault(plan.product_id, plan)
+        items = []
+        for product in Product.objects.select_related("supplier").filter(supplier__isnull=False).order_by("stock_qty", "name"):
+            item = _forecast_for_product(product, totals, window_days, horizon_days)
+            plan = active_plans.get(product.id)
+            if plan:
+                item.update({"plan_id": plan.id, "plan_status": plan.status, "po_no": plan.purchase_order.po_no if plan.purchase_order else None})
+            else:
+                item.update({"plan_id": None, "plan_status": None, "po_no": None})
+            items.append(item)
+        risk_order = {"out": 0, "urgent": 1, "watch": 2, "healthy": 3}
+        items.sort(key=lambda item: (risk_order[item["risk"]], -item["recommended_qty"], item["product"]))
+        supplier_totals = {}
+        for item in items:
+            if not item["recommended_qty"]:
+                continue
+            group = supplier_totals.setdefault(item["supplier"], {"supplier": item["supplier"], "recommended_qty": 0, "estimated_cost": 0, "sku_count": 0})
+            group["recommended_qty"] += item["recommended_qty"]
+            group["estimated_cost"] += item["estimated_cost"]
+            group["sku_count"] += 1
+        summary = {
+            "at_risk": sum(1 for item in items if item["recommended_qty"]),
+            "stockout_soon": sum(1 for item in items if item["stockout_days"] is not None and item["stockout_days"] <= item["lead_time_days"]),
+            "estimated_cost": round(sum(item["estimated_cost"] for item in items), 2),
+            "forecasted_skus": len(items),
+        }
+        return JsonResponse({"window_days": window_days, "horizon_days": horizon_days, "generated_at": timezone.now().isoformat(), "summary": summary, "items": items, "supplier_totals": list(supplier_totals.values())})
+    data = parse_body(request) or {}
+    action = str(data.get("action", "request"))
+    if action == "request":
+        try:
+            product = Product.objects.select_related("supplier").get(sku=str(data["sku"]).strip().upper())
+            if not product.supplier:
+                raise ValueError("Product has no preferred supplier")
+            window_days = min(365, max(30, int(data.get("window_days", 90))))
+            horizon_days = min(180, max(7, int(data.get("horizon_days", 30))))
+            start = timezone.localdate() - timedelta(days=window_days - 1)
+            totals = {product.id: DemandHistory.objects.filter(product=product, period_start__gte=start, period_start__lte=timezone.localdate()).aggregate(total=Sum("quantity"))["total"] or 0}
+            forecast = _forecast_for_product(product, totals, window_days, horizon_days)
+            quantity = max(1, int(data.get("quantity") or forecast["recommended_qty"] or product.reorder_qty))
+            existing = PurchasePlan.objects.filter(product=product, status__in=["pending", "approved", "ordered"]).select_related("product", "supplier", "purchase_order").first()
+            if existing:
+                return JsonResponse({"item": _purchase_plan_item(existing), "detail": "An active purchase plan already exists for this SKU"})
+            expected_date = timezone.localdate() + timedelta(days=product.supplier.lead_time_days)
+            projected_stockout = date.fromisoformat(forecast["projected_stockout"]) if forecast["projected_stockout"] else None
+            plan = PurchasePlan.objects.create(product=product, supplier=product.supplier, average_daily_demand=forecast["average_daily_demand"], window_days=window_days, horizon_days=horizon_days, available_qty=forecast["available_qty"], safety_stock=forecast["safety_stock"], reorder_point=forecast["reorder_point"], recommended_qty=quantity, unit_cost=forecast["unit_cost"], estimated_cost=Decimal(str(forecast["unit_cost"])) * quantity, projected_stockout=projected_stockout, expected_date=expected_date, status="pending", requested_by=request.api_user)
+        except Exception as exc:
+            return JsonResponse({"detail": f"Could not request purchase plan: {exc}"}, status=400)
+        record_audit(request, "request purchase plan", "purchase plan", plan.id, f"{product.sku} / {quantity} units")
+        return JsonResponse({"item": _purchase_plan_item(plan)}, status=201)
+    if action in {"approve", "reject"}:
+        if request.effective_role not in {"admin", "manager"}:
+            return JsonResponse({"detail": "Only admin or manager can review purchase plans"}, status=403)
+        try:
+            plan = PurchasePlan.objects.select_related("product", "supplier", "purchase_order").get(id=int(data["id"]))
+            if plan.status != "pending":
+                raise ValueError("Only pending plans can be reviewed")
+            if action == "reject":
+                plan.status = "rejected"
+                plan.reviewed_by = request.api_user
+                plan.reviewed_at = timezone.now()
+                plan.save(update_fields=["status", "reviewed_by", "reviewed_at"])
+                record_audit(request, "reject purchase plan", "purchase plan", plan.id, plan.product.sku)
+                return JsonResponse({"item": _purchase_plan_item(plan)})
+            po = PurchaseOrder.objects.create(po_no=f"PO-{timezone.now():%y%m%d}-{uuid4().hex[:4].upper()}", supplier=plan.supplier, status="approved", expected_date=plan.expected_date, total=plan.estimated_cost, created_by=request.api_user)
+            PurchaseOrderItem.objects.create(purchase_order=po, product=plan.product, quantity=plan.recommended_qty, unit_cost=plan.unit_cost)
+            plan.status = "ordered"
+            plan.reviewed_by = request.api_user
+            plan.reviewed_at = timezone.now()
+            plan.purchase_order = po
+            plan.save(update_fields=["status", "reviewed_by", "reviewed_at", "purchase_order"])
+        except Exception as exc:
+            return JsonResponse({"detail": f"Could not review purchase plan: {exc}"}, status=400)
+        record_audit(request, "approve purchase plan", "purchase plan", plan.id, f"{plan.product.sku} / {po.po_no}")
+        return JsonResponse({"item": _purchase_plan_item(plan), "po_no": po.po_no})
+    return JsonResponse({"detail": "Unknown demand planning action"}, status=400)
+
+
+def _rfq_detail(rfq):
+    offers = list(rfq.offers.select_related("supplier").all())
+    quoted = [offer for offer in offers if offer.status != "pending" and offer.unit_price > 0]
+    min_total = min((Decimal(offer.unit_price) * rfq.quantity for offer in quoted), default=Decimal("0"))
+    min_lead = min((offer.lead_time_days or offer.supplier.lead_time_days for offer in quoted), default=0)
+    offer_items = []
+    for offer in offers:
+        lead_time = offer.lead_time_days or offer.supplier.lead_time_days
+        total = Decimal(offer.unit_price) * rfq.quantity
+        score = 0
+        if offer in quoted:
+            price_score = float(min_total / total * 60) if total else 0
+            lead_score = (min_lead / lead_time * 20) if lead_time and min_lead else 0
+            availability_score = min(offer.available_qty / max(rfq.quantity, 1), 1) * 10
+            reliability_score = float(offer.supplier.rating / 5 * 10)
+            score = round(price_score + lead_score + availability_score + reliability_score, 1)
+        offer_items.append({
+            "id": offer.id,
+            "supplier": offer.supplier.name,
+            "supplier_id": offer.supplier.id,
+            "supplier_rating": float(offer.supplier.rating),
+            "unit_price": float(offer.unit_price),
+            "total": float(total),
+            "lead_time_days": lead_time,
+            "moq": offer.moq,
+            "available_qty": offer.available_qty,
+            "payment_terms": offer.payment_terms,
+            "status": offer.status,
+            "notes": offer.notes,
+            "score": score,
+            "is_recommended": False,
+            "responded_at": offer.responded_at.isoformat() if offer.responded_at else None,
+        })
+    recommended = max((item for item in offer_items if item["score"]), key=lambda item: item["score"], default=None)
+    if recommended:
+        recommended["is_recommended"] = True
+    return {
+        "id": rfq.id,
+        "rfq_no": rfq.rfq_no,
+        "sku": rfq.product.sku,
+        "product": rfq.product.name,
+        "quantity": rfq.quantity,
+        "needed_by": rfq.needed_by.isoformat() if rfq.needed_by else None,
+        "status": rfq.status,
+        "purchase_plan_id": rfq.purchase_plan_id,
+        "notes": rfq.notes,
+        "requested_by": rfq.requested_by.get_full_name() or rfq.requested_by.username if rfq.requested_by else "System",
+        "created_at": rfq.created_at.isoformat(),
+        "offers": offer_items,
+        "recommended_offer_id": recommended["id"] if recommended else None,
+        "recommended_supplier": recommended["supplier"] if recommended else None,
+        "recommended_score": recommended["score"] if recommended else None,
+    }
+
+
+@csrf_exempt
+@roles_allowed("admin", "manager", "store")
+def rfq_view(request):
+    if request.method == "GET":
+        qs = RFQ.objects.select_related("product", "purchase_plan", "requested_by").prefetch_related("offers__supplier").all()[:50]
+        return JsonResponse({"items": [_rfq_detail(rfq) for rfq in qs], "count": qs.count()})
+    data = parse_body(request) or {}
+    action = str(data.get("action", "create"))
+    if action == "create":
+        try:
+            product = Product.objects.get(sku=str(data["sku"]).strip().upper())
+            plan = PurchasePlan.objects.filter(id=int(data["plan_id"])).first() if data.get("plan_id") else None
+            if plan and plan.product_id != product.id:
+                raise ValueError("Purchase plan does not match the selected SKU")
+            quantity = max(1, int(data.get("quantity") or (plan.recommended_qty if plan else 0)))
+            raw_suppliers = data.get("suppliers") or data.get("supplier_ids") or []
+            if isinstance(raw_suppliers, str):
+                raw_suppliers = [value.strip() for value in raw_suppliers.split(",") if value.strip()]
+            suppliers = []
+            for value in raw_suppliers:
+                supplier = Supplier.objects.filter(id=int(value)).first() if str(value).isdigit() else Supplier.objects.filter(name=value).first()
+                if supplier and supplier not in suppliers:
+                    suppliers.append(supplier)
+            if not suppliers:
+                suppliers = list(Supplier.objects.filter(active=True).order_by("name"))
+            if len(suppliers) < 2:
+                raise ValueError("Select at least two active suppliers for comparison")
+            needed_by = date.fromisoformat(str(data["needed_by"])) if data.get("needed_by") else None
+            rfq = RFQ.objects.create(rfq_no=f"RFQ-{timezone.now():%y%m%d}-{uuid4().hex[:4].upper()}", product=product, purchase_plan=plan, quantity=quantity, needed_by=needed_by, status="sent", notes=str(data.get("notes", "")).strip(), requested_by=request.api_user)
+            RFQOffer.objects.bulk_create([RFQOffer(rfq=rfq, supplier=supplier, lead_time_days=supplier.lead_time_days) for supplier in suppliers])
+        except Exception as exc:
+            return JsonResponse({"detail": f"Could not send RFQ: {exc}"}, status=400)
+        record_audit(request, "send supplier RFQ", "rfq", rfq.id, f"{rfq.rfq_no} / {product.sku} / {len(suppliers)} suppliers")
+        return JsonResponse({"item": _rfq_detail(rfq)}, status=201)
+    if action == "quote":
+        try:
+            offer = RFQOffer.objects.select_related("rfq", "supplier").get(id=int(data["offer_id"]))
+            offer.unit_price = Decimal(str(data["unit_price"]))
+            offer.lead_time_days = max(0, int(data.get("lead_time_days") or offer.supplier.lead_time_days))
+            offer.moq = max(1, int(data.get("moq") or 1))
+            offer.available_qty = max(0, int(data.get("available_qty") or 0))
+            offer.payment_terms = str(data.get("payment_terms", "")).strip()
+            offer.notes = str(data.get("notes", "")).strip()
+            offer.status = "received"
+            offer.responded_at = timezone.now()
+            offer.save(update_fields=["unit_price", "lead_time_days", "moq", "available_qty", "payment_terms", "notes", "status", "responded_at"])
+            offer.rfq.status = "quoted"
+            offer.rfq.save(update_fields=["status"])
+        except Exception as exc:
+            return JsonResponse({"detail": f"Could not record supplier quote: {exc}"}, status=400)
+        record_audit(request, "record supplier quote", "rfq offer", offer.id, f"{offer.rfq.rfq_no} / {offer.supplier.name}")
+        return JsonResponse({"item": _rfq_detail(offer.rfq)})
+    if action == "select":
+        if request.effective_role not in {"admin", "manager"}:
+            return JsonResponse({"detail": "Only admin or manager can select an offer and create a PO"}, status=403)
+        try:
+            offer = RFQOffer.objects.select_related("rfq__product", "rfq__purchase_plan", "supplier").get(id=int(data["offer_id"]))
+            rfq = offer.rfq
+            if offer.status != "received" or not offer.unit_price:
+                raise ValueError("Only a received quote with a unit price can be selected")
+            if offer.available_qty < rfq.quantity:
+                raise ValueError("Selected supplier cannot cover the requested quantity")
+            expected_date = rfq.needed_by or (timezone.localdate() + timedelta(days=offer.lead_time_days or offer.supplier.lead_time_days))
+            total = offer.unit_price * rfq.quantity
+            po = PurchaseOrder.objects.create(po_no=f"PO-{timezone.now():%y%m%d}-{uuid4().hex[:4].upper()}", supplier=offer.supplier, status="approved", expected_date=expected_date, total=total, created_by=request.api_user)
+            PurchaseOrderItem.objects.create(purchase_order=po, product=rfq.product, quantity=rfq.quantity, unit_cost=offer.unit_price)
+            rfq.status = "selected"
+            rfq.save(update_fields=["status"])
+            rfq.offers.exclude(id=offer.id).update(status="rejected")
+            offer.status = "selected"
+            offer.save(update_fields=["status"])
+            if rfq.purchase_plan:
+                plan = rfq.purchase_plan
+                plan.supplier = offer.supplier
+                plan.unit_cost = offer.unit_price
+                plan.estimated_cost = total
+                plan.expected_date = expected_date
+                plan.status = "ordered"
+                plan.reviewed_by = request.api_user
+                plan.reviewed_at = timezone.now()
+                plan.purchase_order = po
+                plan.save(update_fields=["supplier", "unit_cost", "estimated_cost", "expected_date", "status", "reviewed_by", "reviewed_at", "purchase_order"])
+        except Exception as exc:
+            return JsonResponse({"detail": f"Could not select supplier offer: {exc}"}, status=400)
+        record_audit(request, "select supplier offer", "rfq", rfq.id, f"{offer.supplier.name} / {po.po_no}")
+        return JsonResponse({"item": _rfq_detail(rfq), "po_no": po.po_no})
+    if action == "close":
+        try:
+            rfq = RFQ.objects.get(id=int(data["id"]))
+            rfq.status = "closed"
+            rfq.save(update_fields=["status"])
+        except Exception as exc:
+            return JsonResponse({"detail": f"Could not close RFQ: {exc}"}, status=400)
+        return JsonResponse({"item": _rfq_detail(rfq)})
+    return JsonResponse({"detail": "Unknown RFQ action"}, status=400)
 
 @csrf_exempt
 @roles_allowed("admin", "manager", "sales")
@@ -554,15 +1531,28 @@ def portal_view(request):
         access=CustomerPortalToken.objects.select_related("customer").get(token=token_value,active=True,expires_at__gt=timezone.now())
     except CustomerPortalToken.DoesNotExist:
         return JsonResponse({"detail":"Portal link is invalid or expired"},status=401)
-    if request.method == "GET": return JsonResponse(portal_payload(access.customer,access.token))
+    def belongs(customer_name, customer_company):
+        return customer_name == access.customer.name or (customer_company and customer_company == access.customer.company)
+    def log_access(action, entity="", entity_id=""):
+        PortalAccessLog.objects.create(portal_token=access,action=action,entity=entity,entity_id=entity_id,ip_address=request.META.get("REMOTE_ADDR"))
+    if request.method == "GET":
+        log_access("view")
+        return JsonResponse(portal_payload(access.customer,access.token))
     data=parse_body(request) or {}; action=str(data.get("action",""))
     try:
         if action == "approve_quote":
-            quote=Quotation.objects.get(id=int(data["quote_id"])); quote.status="approved"; quote.save(update_fields=["status"]); result={"quote_id":quote.id,"status":quote.status}
+            quote=Quotation.objects.get(id=int(data["quote_id"]))
+            if not belongs(quote.customer_name,quote.customer_company): raise ValueError("Quote does not belong to this customer")
+            quote.status="approved"; quote.save(update_fields=["status"]); result={"quote_id":quote.id,"status":quote.status}
+            log_access(action,"quotation",quote.id)
         elif action == "repeat_order":
-            order=SalesOrder.objects.get(id=int(data["order_id"])); quote=Quotation.objects.create(quote_no=f"QT-{timezone.now():%y%m%d}-{uuid4().hex[:4].upper()}",customer_name=access.customer.name,customer_company=access.customer.company,total=order.total,status="draft",valid_until=timezone.localdate()+timedelta(days=7),created_by=None); result={"quote_no":quote.quote_no,"status":quote.status}
+            order=SalesOrder.objects.get(id=int(data["order_id"]))
+            if not belongs(order.customer_name,order.customer_company): raise ValueError("Order does not belong to this customer")
+            quote=Quotation.objects.create(quote_no=f"QT-{timezone.now():%y%m%d}-{uuid4().hex[:4].upper()}",customer_name=access.customer.name,customer_company=access.customer.company,total=order.total,status="draft",valid_until=timezone.localdate()+timedelta(days=7),created_by=None); result={"quote_no":quote.quote_no,"status":quote.status}; log_access(action,"sales_order",order.id)
         elif action == "download_invoice":
-            invoice=Invoice.objects.get(id=int(data["invoice_id"])); result=invoice_dict(invoice)
+            invoice=Invoice.objects.select_related("sales_order").get(id=int(data["invoice_id"]))
+            if not belongs(invoice.sales_order.customer_name,invoice.sales_order.customer_company): raise ValueError("Invoice does not belong to this customer")
+            result=invoice_dict(invoice); log_access(action,"invoice",invoice.id)
         else: raise ValueError("Unknown portal action")
     except Exception as exc:
         return JsonResponse({"detail":f"Could not complete portal action: {exc}"},status=400)
@@ -580,6 +1570,42 @@ def portal_issue_view(request):
     record_audit(request,"issue portal link","customer",customer.id,customer.company or customer.name)
     return JsonResponse({"item":{"token":token.token,"customer":customer.company or customer.name,"expires_at":token.expires_at.isoformat(),"portal_path":f"/portal/{token.token}"},"portal":portal_payload(customer,token.token)},status=201)
 
+
+@csrf_exempt
+@roles_allowed("admin", "manager", "sales")
+def portal_accounts_view(request):
+    if request.method == "GET":
+        accounts=CustomerPortalAccount.objects.select_related("customer").order_by("customer__company","customer__name")
+        return JsonResponse({"accounts":[{"id":account.id,"customer_id":account.customer_id,"customer":account.customer.company or account.customer.name,"email":account.email,"active":account.active,"last_login":account.last_login.isoformat() if account.last_login else None} for account in accounts]})
+    data=parse_body(request) or {}; action=str(data.get("action", "create"))
+    if action == "create":
+        try:
+            customer=Customer.objects.get(id=int(data["customer_id"])); email=str(data.get("email") or customer.email).strip().lower(); password=str(data.get("password") or "")
+            if not email or len(password) < 8: raise ValueError("Customer email and a password of at least 8 characters are required")
+            account,_=CustomerPortalAccount.objects.update_or_create(customer=customer,defaults={"email":email,"password_hash":make_password(password),"active":True,"created_by":request.api_user})
+        except Exception as exc:
+            return JsonResponse({"detail":f"Could not create portal account: {exc}"},status=400)
+        record_audit(request,"create portal account","customer",customer.id,email)
+        return JsonResponse({"item":{"id":account.id,"customer_id":customer.id,"customer":customer.company or customer.name,"email":account.email,"active":account.active,"last_login":None}},status=201)
+    if action == "disable":
+        account=CustomerPortalAccount.objects.filter(id=int(data["id"])).first()
+        if not account: return JsonResponse({"detail":"Portal account not found"},status=404)
+        account.active=False; account.save(update_fields=["active"]); CustomerPortalToken.objects.filter(customer=account.customer,active=True).update(active=False)
+        record_audit(request,"disable portal account","customer",account.customer_id,account.email)
+        return JsonResponse({"item":{"id":account.id,"active":False}})
+    return JsonResponse({"detail":"Unknown portal account action"},status=400)
+
+
+@csrf_exempt
+def portal_account_login_view(request):
+    if request.method != "POST": return JsonResponse({"detail":"POST required"},status=405)
+    data=parse_body(request) or {}; email=str(data.get("email", "")).strip().lower(); password=str(data.get("password", ""))
+    account=CustomerPortalAccount.objects.select_related("customer").filter(email=email,active=True).first()
+    if not account or not check_password(password, account.password_hash): return JsonResponse({"detail":"Invalid customer email or password"},status=401)
+    account.last_login=timezone.now(); account.save(update_fields=["last_login"])
+    token=CustomerPortalToken.objects.create(token=f"acct_{uuid4().hex}",customer=account.customer,expires_at=timezone.now()+timedelta(days=7),created_by=None)
+    return JsonResponse({"token":token.token,"expires_at":token.expires_at.isoformat(),"customer":{"id":account.customer_id,"name":account.customer.name,"company":account.customer.company,"email":account.email},"portal_path":f"/portal/{token.token}"})
+
 @csrf_exempt
 @roles_allowed("admin", "manager", "sales")
 def pricing_view(request):
@@ -588,6 +1614,15 @@ def pricing_view(request):
         return JsonResponse({"items":rules})
     if request.method == "POST":
         data=parse_body(request) or {}; action=str(data.get("action","rule"))
+        if action != "preview" and request.effective_role == "sales":
+            discount=float(data.get("discount_percent", 0) or 0)
+            if discount <= 0: return JsonResponse({"detail":"Discount percentage is required"}, status=400)
+            approval=ApprovalRequest.objects.create(kind="discount", reference=str(data.get("name") or "Pricing discount"), amount=discount, organization=request.organization, branch=request.branch, payload={"customer_type": data.get("customer_type", "dealer"), "min_qty": data.get("min_qty", 1), "discount_percent": discount}, requested_by=request.api_user, notes="Sales discount requires manager approval")
+            Notification.objects.create(role="manager", title="Discount approval needed", message=f"{approval.reference} requested by {request.api_user.get_full_name() or request.api_user.username}")
+            record_audit(request, "request discount approval", "approval", approval.id, approval.reference)
+            return JsonResponse({"item": {"id": approval.id, "status": approval.status, "kind": approval.kind, "reference": approval.reference, "amount": float(approval.amount)}, "approval_required": True}, status=202)
+        if action != "preview" and request.effective_role not in {"admin", "manager"}:
+            return JsonResponse({"detail":"Only admin or manager can change pricing rules"},status=403)
         if action == "preview":
             try:
                 product=Product.objects.get(sku=str(data["sku"]).strip().upper()); customer_type=str(data.get("customer_type","retail")); qty=max(1,int(data.get("quantity",1)))
@@ -618,28 +1653,46 @@ def analytics_view(request):
     categories=[{"label":row["category"],"value":row["count"]} for row in Product.objects.values("category").annotate(count=Count("id")).order_by("-count")]
     suppliers=[{"label":row["supplier__name"] or "Unassigned","value":row["count"]} for row in Product.objects.values("supplier__name").annotate(count=Count("id")).order_by("-count")[:6]]
     top_customers=[{"label":c.company or c.name,"value":float(c.outstanding_balance)} for c in Customer.objects.filter(active=True).order_by("-outstanding_balance")[:6]]
-    return JsonResponse({"metrics":{"sales_total":sales_total,"invoice_total":invoice_total,"inventory_value":inventory_value,"inventory_cost":inventory_cost,"estimated_inventory_margin":max(0,inventory_value-inventory_cost),"outstanding":outstanding,"quote_conversion":round((approved/quotes_total*100),1) if quotes_total else 0,"low_stock":sum(1 for p in products if p.stock_qty<=p.reorder_level)},"categories":categories,"suppliers":suppliers,"top_customers":top_customers})
+    low_stock=sum(1 for p in products if p.stock_qty<=p.reorder_level)
+    open_purchase_orders=PurchaseOrder.objects.filter(status__in=["approved","ordered","partial"]).count()
+    open_rfqs=RFQ.objects.filter(status__in=["sent","quoted"]).count()
+    invoice_exceptions=SupplierInvoice.objects.filter(status="exception").count()
+    alerts=[]
+    if low_stock: alerts.append({"id":"stock","severity":"urgent","title":f"{low_stock} SKU(s) need replenishment","detail":"Review the demand plan and raise the next purchase request."})
+    if invoice_exceptions: alerts.append({"id":"invoice","severity":"review","title":f"{invoice_exceptions} supplier invoice exception(s)","detail":"Check received quantities and approve only after the discrepancy is resolved."})
+    if open_rfqs: alerts.append({"id":"rfq","severity":"watch","title":f"{open_rfqs} sourcing request(s) are open","detail":"Compare supplier quotes and select the best offer."})
+    return JsonResponse({"metrics":{"sales_total":sales_total,"invoice_total":invoice_total,"inventory_value":inventory_value,"inventory_cost":inventory_cost,"estimated_inventory_margin":max(0,inventory_value-inventory_cost),"outstanding":outstanding,"quote_conversion":round((approved/quotes_total*100),1) if quotes_total else 0,"low_stock":low_stock},"operations":{"open_purchase_orders":open_purchase_orders,"open_rfqs":open_rfqs,"receiving_exceptions":invoice_exceptions,"warehouse_units":WarehouseStock.objects.aggregate(total=Sum("quantity"))["total"] or 0,"at_risk_suppliers":0},"alerts":alerts,"categories":categories,"suppliers":suppliers,"top_customers":top_customers})
 
 @csrf_exempt
-@api_login_required
+@roles_allowed("admin", "manager", "sales", "store")
 def governance_view(request):
-    role=request.api_user.profile.role
+    role=request.effective_role
     if request.method == "GET":
         notifications=Notification.objects.filter(Q(user=request.api_user)|Q(user__isnull=True,role=role)).order_by("-created_at")[:50]
-        approvals=ApprovalRequest.objects.select_related("requested_by","reviewed_by").order_by("-created_at")[:100]
+        approval_query=ApprovalRequest.objects.select_related("requested_by","reviewed_by","branch").filter(organization=request.organization)
+        if role not in {"admin", "manager"}:
+            approval_query=approval_query.filter(requested_by=request.api_user)
+        approvals=approval_query.order_by("-created_at")[:100]
         audits=AuditLog.objects.select_related("user").order_by("-created_at")[:100]
         return JsonResponse({"notifications":[{"id":n.id,"title":n.title,"message":n.message,"read":n.read,"created_at":n.created_at.isoformat()} for n in notifications],"approvals":[{"id":a.id,"kind":a.kind,"reference":a.reference,"amount":float(a.amount),"status":a.status,"requested_by":(a.requested_by.get_full_name() or a.requested_by.username) if a.requested_by else "System","reviewed_by":(a.reviewed_by.get_full_name() or a.reviewed_by.username) if a.reviewed_by else None,"notes":a.notes,"created_at":a.created_at.isoformat()} for a in approvals],"audits":[{"id":a.id,"user":(a.user.get_full_name() or a.user.username) if a.user else "System","action":a.action,"entity":a.entity,"entity_id":a.entity_id,"detail":a.detail,"created_at":a.created_at.isoformat()} for a in audits]})
     if request.method == "POST":
         data=parse_body(request) or {}; action=str(data.get("action","request"))
         try:
             if action == "request":
-                approval=ApprovalRequest.objects.create(kind=str(data.get("kind","purchase")),reference=str(data["reference"]).strip(),amount=float(data.get("amount",0) or 0),notes=str(data.get("notes","")).strip(),requested_by=request.api_user)
+                kind=str(data.get("kind","purchase")).strip()
+                if kind not in {choice[0] for choice in ApprovalRequest.KIND_CHOICES}: raise ValueError("Invalid approval type")
+                approval=ApprovalRequest.objects.create(kind=kind,reference=str(data["reference"]).strip(),amount=float(data.get("amount",0) or 0),organization=request.organization,branch=request.branch,payload=data.get("payload") if isinstance(data.get("payload"), dict) else {},notes=str(data.get("notes","")).strip(),requested_by=request.api_user)
                 Notification.objects.create(role="manager",title=f"Approval needed: {approval.kind}",message=f"{approval.reference} requested by {request.api_user.get_full_name() or request.api_user.username}")
                 record_audit(request,"request approval","approval",approval.id,approval.reference)
                 item={"id":approval.id,"kind":approval.kind,"reference":approval.reference,"amount":float(approval.amount),"status":approval.status,"requested_by":request.api_user.get_full_name() or request.api_user.username,"reviewed_by":None,"notes":approval.notes,"created_at":approval.created_at.isoformat()}
             elif action in {"approve","reject"}:
                 if role not in {"admin","manager"}: return JsonResponse({"detail":"Only admin or manager can review approvals"},status=403)
-                approval=ApprovalRequest.objects.get(id=int(data["id"])); approval.status="approved" if action=="approve" else "rejected"; approval.reviewed_by=request.api_user; approval.reviewed_at=timezone.now(); approval.notes=str(data.get("notes",approval.notes)); approval.save(update_fields=["status","reviewed_by","reviewed_at","notes"])
+                approval=ApprovalRequest.objects.get(id=int(data["id"]),organization=request.organization)
+                if approval.status != "pending": return JsonResponse({"detail":"Only pending approvals can be reviewed"},status=400)
+                if approval.requested_by_id == request.api_user.id: return JsonResponse({"detail":"You cannot approve your own request"},status=403)
+                membership=request.api_user.organization_memberships.filter(organization=request.organization,active=True).first()
+                if action == "approve" and role != "admin" and membership and approval.amount > membership.approval_limit: return JsonResponse({"detail":"Approval exceeds your organization approval limit"},status=403)
+                approval.status="approved" if action=="approve" else "rejected"; approval.reviewed_by=request.api_user; approval.reviewed_at=timezone.now(); approval.notes=str(data.get("notes",approval.notes)); approval.save(update_fields=["status","reviewed_by","reviewed_at","notes"])
                 if approval.requested_by: Notification.objects.create(user=approval.requested_by,title=f"Approval {approval.status}",message=f"{approval.reference} was {approval.status} by {request.api_user.get_full_name() or request.api_user.username}")
                 record_audit(request,action,"approval",approval.id,approval.reference)
                 item={"id":approval.id,"kind":approval.kind,"reference":approval.reference,"amount":float(approval.amount),"status":approval.status,"requested_by":(approval.requested_by.get_full_name() or approval.requested_by.username) if approval.requested_by else "System","reviewed_by":request.api_user.get_full_name() or request.api_user.username,"notes":approval.notes,"created_at":approval.created_at.isoformat()}

@@ -20,7 +20,7 @@ export default function CreateModal({ title, copy, fields, initial = {}, submitL
         {fields.map(field => <label key={field.name} className={field.span === 2 ? 'span-2' : ''}>{field.label}
           {field.type === 'select' ? <select value={form[field.name] ?? field.default ?? ''} onChange={e => change(field.name,e.target.value)} required={field.required}>
             {(field.options || []).map(opt => <option key={opt.value ?? opt} value={opt.value ?? opt}>{opt.label ?? opt}</option>)}
-          </select> : <input type={field.type || 'text'} value={form[field.name] ?? ''} onChange={e => change(field.name,e.target.value)} placeholder={field.placeholder || ''} required={field.required} min={field.min} step={field.step} />}
+          </select> : field.type === 'textarea' ? <textarea rows={field.rows || 4} value={form[field.name] ?? ''} onChange={e => change(field.name,e.target.value)} placeholder={field.placeholder || ''} required={field.required} /> : <input type={field.type || 'text'} value={form[field.name] ?? ''} onChange={e => change(field.name,e.target.value)} placeholder={field.placeholder || ''} required={field.required} min={field.min} step={field.step} />}
         </label>)}
       </div>
       {error && <div className="form-error">{error}</div>}

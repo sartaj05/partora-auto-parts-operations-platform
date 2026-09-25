@@ -4,9 +4,31 @@ import { createEndpoint, loadEndpoint } from '../api/client'
 import { useAuth } from '../context/AuthContext'
 import CreateModal from '../components/CreateModal'
 import StatusBadge from '../components/StatusBadge'
-import { BarcodePage, FitmentsPage, PurchaseOrdersPage, WarehousesPage, ReorderPage, SalesFlowPage, FulfillmentPage, ReturnsPage, InventoryControlPage, SupplierPerformancePage, PortalPage, CustomersPage, PricingPage, AnalyticsPage, GovernancePage } from './OperationsPages'
+import { BarcodePage, VinFitmentPage, MobileWarehousePage, PurchaseOrdersPage, ReceivingPage, WarehouseControlPage, WarehousesPage, ReorderPage, DemandPlanningPage, RFQPage, SalesFlowPage, FulfillmentPage, NotificationsPage, CopilotPage, FinancePage, WarrantyIntelligencePage, ReturnsPage, InventoryControlPage, SupplierIntelligencePage, DealerPortalPage, PortalPage, PortalAccountsPage, CustomersPage, PricingPage, CommandCenterPage, GovernancePage, IntegrationsPage, PwaAdminPage, TenancyPage, PermissionMatrixPage, AutomationPage, FleetPage, SecurityPage, DocumentsPage, DeliveryPage, PartnerApiPage, PredictiveFleetPage, CustomerServicePage, SaasBillingPage, ObservabilityPage, InventoryNetworkPage } from './OperationsPages'
 
 const nav = [
+  ['portal_accounts','/app/portal-accounts','Portal accounts','@'],
+  ['permissions','/app/permissions','Permission matrix','P'],
+  ['customer_service','/app/customer-service','Customer service','?'],
+  ['saas_billing','/app/saas-billing','SaaS billing','$'],
+  ['observability','/app/observability','Reliability','~'],
+  ['inventory_network','/app/inventory-network','Network planning','<>'],
+  ['security','/app/security','Security center','!'],
+  ['documents','/app/documents','AI documents','+'],
+  ['delivery','/app/delivery','Delivery & POD','>'],
+  ['partner_api','/app/partner-api','Partner API','{}'],
+  ['predictive_fleet','/app/predictive-fleet','Fleet intelligence','~'],
+  ['receiving','/app/receiving','Receiving & matching','+'],
+  ['integrations','/app/integrations','Integrations hub','↗'],
+  ['pwa_admin','/app/pwa-admin','PWA devices','▣'],
+  ['tenancy','/app/tenancy','Organizations','◎'],
+  ['automation','/app/automation','Automation','↻'],
+  ['fleet','/app/fleet','Fleet service','▤'],
+  ['mobile_warehouse','/app/mobile-warehouse','Mobile warehouse','▣'],
+  ['notifications','/app/notifications','Notifications','✉'],
+  ['copilot','/app/copilot','AI copilot','✦'],
+  ['finance','/app/finance','Finance & GST','₹'],
+  ['warranty_intelligence','/app/warranty','Warranty insights','↺'],
   ['dashboard','/app','Overview','⌂'],
   ['inventory','/app/inventory','Inventory','⌕'],
   ['quotations','/app/quotations','Quotations','▤'],
@@ -17,6 +39,8 @@ const nav = [
   ['purchase_orders','/app/purchase-orders','Purchase orders','▥'],
   ['warehouses','/app/warehouses','Warehouses','▦'],
   ['reorder','/app/reorder','Reorder desk','↻'],
+  ['demand_planning','/app/demand-planning','Demand planning','✦'],
+  ['rfq','/app/rfq','Supplier RFQs','⇄'],
   ['sales_flow','/app/sales-flow','Sales flow','→'],
   ['fulfillment','/app/fulfillment','Fulfillment','✓'],
   ['returns','/app/returns','Returns & RMA','↩'],
@@ -33,6 +57,24 @@ function money(n) { return new Intl.NumberFormat('en-IN', { style:'currency', cu
 function niceRole(role){ return role ? role[0].toUpperCase()+role.slice(1) : '' }
 function dateAfter(days){ const d=new Date(); d.setDate(d.getDate()+days); return d.toISOString().slice(0,10) }
 
+function ScopeSelector(){
+  const { user, modules } = useAuth()
+  const [tenant,setTenant]=useState(null)
+  const [selected,setSelected]=useState(()=>localStorage.getItem('partora_branch') || '')
+  useEffect(()=>{
+    if(!modules.includes('tenancy')) return
+    loadEndpoint('/tenancy/',user.role).then(r=>setTenant(r.data)).catch(()=>setTenant(null))
+  },[modules,user.role])
+  if(!tenant) return null
+  function change(value){
+    if(value) localStorage.setItem('partora_branch',value)
+    else localStorage.removeItem('partora_branch')
+    setSelected(value)
+    window.location.reload()
+  }
+  return <div className="scope-selector"><small>{tenant.organization?.name || 'Organization'}</small><select value={selected} onChange={e=>change(e.target.value)} aria-label="Branch scope"><option value="">All branches</option>{tenant.branches.map(branch=><option key={branch.code} value={branch.code}>{branch.code} · {branch.name}</option>)}</select></div>
+}
+
 function Shell({ children }) {
   const { user, modules, demoMode, logout } = useAuth()
   const location = useLocation()
@@ -41,8 +83,9 @@ function Shell({ children }) {
       <aside className="sidebar">
         <Link className="brand app-brand" to="/"><span className="brand-mark">P</span><span>Partora</span></Link>
         <div className="workspace-tag">Operations workspace</div>
+        <ScopeSelector />
         <nav className="app-nav">
-          {nav.filter(([key]) => modules.includes(key)).map(([key,path,label,icon]) => {
+          {nav.filter(([key]) => modules.includes(key) || (key === 'portal_accounts' && modules.includes('portal'))).map(([key,path,label,icon]) => {
             const active = path === '/app' ? location.pathname === '/app' : location.pathname.startsWith(path)
             return <Link className={active ? 'active' : ''} key={key} to={path}><span>{icon}</span>{label}</Link>
           })}
@@ -99,12 +142,14 @@ function Inventory() {
   const [loading,setLoading]=useState(true)
   const [error,setError]=useState('')
   const [creating,setCreating]=useState(false)
+  const [importing,setImporting]=useState(false)
   const canCreate=['admin','manager'].includes(user.role)
   useEffect(()=>{ loadEndpoint('/inventory/',user.role).then(r=>{setItems(r.data.items);setLoading(false)}).catch(e=>{setError(e.message);setLoading(false)}) },[user.role])
   const filtered=useMemo(()=>{ const q=query.toLowerCase().trim(); if(!q) return items; return items.filter(i=>[i.sku,i.name,i.brand,i.category,i.supplier].join(' ').toLowerCase().includes(q)) },[items,query])
   async function addItem(form){ const result=await createEndpoint('/inventory/',form,user.role); setItems(current=>[result.item,...current]) }
+  async function importCatalog(form){ await createEndpoint('/inventory/',{action:'import',rows:form.rows},user.role); const fresh=await loadEndpoint('/inventory/',user.role); setItems(fresh.data.items); setImporting(false) }
   return <>
-    <PageHeader eyebrow="Catalog" title="Inventory search" copy="Search across SKU, description, brand, category and supplier." action={canCreate?<button className="button app-action" onClick={()=>setCreating(true)}>+ Add item</button>:null} />
+    <PageHeader eyebrow="Catalog" title="Inventory search" copy="Search across SKU, barcode, description, brand, category and supplier." action={canCreate?<div className="inline-actions"><button className="button ghost app-action" onClick={()=>setImporting(true)}>Import catalog</button><button className="button app-action" onClick={()=>setCreating(true)}>+ Add item</button></div>:null} />
     <div className="toolbar"><div className="searchbox">⌕<input placeholder="Search brake pad, MCB-C32, supplier…" value={query} onChange={e=>setQuery(e.target.value)}/></div><span>{filtered.length} items</span></div>
     {loading?<Loading/>:error?<ErrorBox message={error}/>:<div className="table-card"><table><thead><tr><th>Part</th><th>Category</th><th>Supplier</th><th>Location</th><th>Price</th><th>Stock</th><th>Status</th></tr></thead><tbody>{filtered.map(i=><tr key={i.id}><td><b>{i.name}</b><small>{i.sku} · {i.brand}</small></td><td className="capitalize">{i.category}</td><td>{i.supplier}</td><td>{i.bin_location}</td><td>{money(i.price)}</td><td><b>{i.stock_qty}</b><small>Reorder {i.reorder_level}</small></td><td><StatusBadge value={i.stock_status}/></td></tr>)}</tbody></table></div>}
     {creating && <CreateModal title="Add catalog item" copy="Create a searchable SKU with opening stock." submitLabel="Add item" onClose={()=>setCreating(false)} onSubmit={addItem} initial={{category:'auto',stock_qty:0,reorder_level:10}} fields={[
@@ -114,6 +159,7 @@ function Inventory() {
       {name:'price',label:'Unit price',type:'number',required:true,min:'0',step:'0.01'}, {name:'stock_qty',label:'Opening stock',type:'number',min:'0'},
       {name:'reorder_level',label:'Reorder level',type:'number',min:'0'}
     ]}/>} 
+    {importing && <CreateModal title="Import catalog" copy="Paste CSV with headers: sku,name,brand,category,price,stock_qty,reorder_level,bin_location,barcode,supplier." submitLabel="Import rows" onClose={()=>setImporting(false)} onSubmit={importCatalog} fields={[{name:'rows',label:'Catalog CSV',type:'textarea',required:true,span:2,rows:9,placeholder:'sku,name,brand,category,price\nNEW-001,Relay,VoltEdge,electrical,180'}]}/>} 
   </>
 }
 
@@ -123,10 +169,11 @@ function Quotations() {
   const [creating,setCreating]=useState(false)
   useEffect(()=>{loadEndpoint('/quotations/',user.role).then(r=>setState({loading:false,items:r.data.items,error:''})).catch(e=>setState({loading:false,items:[],error:e.message}))},[user.role])
   async function addQuote(form){ const result=await createEndpoint('/quotations/',form,user.role); setState(current=>({...current,items:[result.item,...current.items]})) }
-  return <><PageHeader eyebrow="Sales desk" title="Quotations" copy="Track customer quotes from draft through approval." action={<button className="button app-action" onClick={()=>setCreating(true)}>+ New quotation</button>}/>{state.loading?<Loading/>:state.error?<ErrorBox message={state.error}/>:<div className="table-card"><table><thead><tr><th>Quote</th><th>Customer</th><th>Company</th><th>Total</th><th>Valid until</th><th>Status</th><th>Owner</th></tr></thead><tbody>{state.items.map(q=><tr key={q.id}><td><b>{q.quote_no}</b></td><td>{q.customer_name}</td><td>{q.customer_company}</td><td><b>{money(q.total)}</b></td><td>{q.valid_until}</td><td><StatusBadge value={q.status}/></td><td>{q.created_by}</td></tr>)}</tbody></table></div>}
-    {creating && <CreateModal title="New quotation" copy="Create a customer quote for the sales pipeline." submitLabel="Create quote" onClose={()=>setCreating(false)} onSubmit={addQuote} initial={{status:'draft',valid_until:dateAfter(7)}} fields={[
+  return <><PageHeader eyebrow="Sales desk" title="Quotations" copy="Track customer quotes from draft through approval." action={<button className="button app-action" onClick={()=>setCreating(true)}>+ New quotation</button>}/>{state.loading?<Loading/>:state.error?<ErrorBox message={state.error}/>:<div className="table-card"><table><thead><tr><th>Quote</th><th>Customer</th><th>Company</th><th>Lines</th><th>Total</th><th>Valid until</th><th>Status</th><th>Owner</th></tr></thead><tbody>{state.items.map(q=><tr key={q.id}><td><b>{q.quote_no}</b></td><td>{q.customer_name}</td><td>{q.customer_company}</td><td>{q.items?.length||0}</td><td><b>{money(q.total)}</b><small>{q.tax_rate ? `Tax ${q.tax_rate}%` : 'No tax'}</small></td><td>{q.valid_until}</td><td><StatusBadge value={q.status}/></td><td>{q.created_by}</td></tr>)}</tbody></table></div>}
+    {creating && <CreateModal title="New quotation" copy='Add optional line items as JSON, for example [{"sku":"BRK-1048","quantity":2}]. Prices default from the catalog.' submitLabel="Create quote" onClose={()=>setCreating(false)} onSubmit={addQuote} initial={{status:'draft',valid_until:dateAfter(7),items:'[]',tax_rate:0}} fields={[
       {name:'customer_name',label:'Customer name',required:true}, {name:'customer_company',label:'Company'},
-      {name:'total',label:'Quote total',type:'number',required:true,min:'0',step:'0.01'}, {name:'valid_until',label:'Valid until',type:'date',required:true},
+      {name:'total',label:'Quote total (without lines)',type:'number',min:'0',step:'0.01'}, {name:'tax_rate',label:'Tax rate %',type:'number',min:'0',step:'0.01'}, {name:'valid_until',label:'Valid until',type:'date',required:true},
+      {name:'items',label:'Quote line items JSON',type:'textarea',span:2,placeholder:'[{"sku":"BRK-1048","quantity":2}]'},
       {name:'status',label:'Status',type:'select',options:['draft','sent','approved'],span:2}
     ]}/>} 
   </>
@@ -166,24 +213,48 @@ function Allowed({ module, children }) { const { modules }=useAuth(); return mod
 export default function DashboardPage(){
   return <Shell><Routes>
     <Route index element={<Overview/>}/>
+    <Route path="permissions" element={<Allowed module="permissions"><PermissionMatrixPage/></Allowed>}/>
     <Route path="inventory" element={<Allowed module="inventory"><Inventory/></Allowed>}/>
     <Route path="quotations" element={<Allowed module="quotations"><Quotations/></Allowed>}/>
     <Route path="suppliers" element={<Allowed module="suppliers"><Suppliers/></Allowed>}/>
     <Route path="stock" element={<Allowed module="stock"><Stock/></Allowed>}/>
     <Route path="barcodes" element={<Allowed module="barcodes"><BarcodePage/></Allowed>}/>
-    <Route path="fitments" element={<Allowed module="fitments"><FitmentsPage/></Allowed>}/>
+    <Route path="fitments" element={<Allowed module="fitments"><VinFitmentPage/></Allowed>}/>
     <Route path="purchase-orders" element={<Allowed module="purchase_orders"><PurchaseOrdersPage/></Allowed>}/>
-    <Route path="warehouses" element={<Allowed module="warehouses"><WarehousesPage/></Allowed>}/>
+    <Route path="receiving" element={<Allowed module="receiving"><ReceivingPage/></Allowed>}/>
+    <Route path="mobile-warehouse" element={<Allowed module="mobile_warehouse"><MobileWarehousePage/></Allowed>}/>
+    <Route path="warehouses" element={<Allowed module="warehouses"><WarehouseControlPage/></Allowed>}/>
     <Route path="reorder" element={<Allowed module="reorder"><ReorderPage/></Allowed>}/>
+    <Route path="demand-planning" element={<Allowed module="demand_planning"><DemandPlanningPage/></Allowed>}/>
+    <Route path="rfq" element={<Allowed module="rfq"><RFQPage/></Allowed>}/>
     <Route path="sales-flow" element={<Allowed module="sales_flow"><SalesFlowPage/></Allowed>}/>
     <Route path="fulfillment" element={<Allowed module="fulfillment"><FulfillmentPage/></Allowed>}/>
+    <Route path="notifications" element={<Allowed module="notifications"><NotificationsPage/></Allowed>}/>
+    <Route path="copilot" element={<Allowed module="copilot"><CopilotPage/></Allowed>}/>
+    <Route path="finance" element={<Allowed module="finance"><FinancePage/></Allowed>}/>
+    <Route path="warranty" element={<Allowed module="warranty_intelligence"><WarrantyIntelligencePage/></Allowed>}/>
+    <Route path="integrations" element={<Allowed module="integrations"><IntegrationsPage/></Allowed>}/>
+    <Route path="pwa-admin" element={<Allowed module="pwa_admin"><PwaAdminPage/></Allowed>}/>
+    <Route path="tenancy" element={<Allowed module="tenancy"><TenancyPage/></Allowed>}/>
+    <Route path="automation" element={<Allowed module="automation"><AutomationPage/></Allowed>}/>
+    <Route path="fleet" element={<Allowed module="fleet"><FleetPage/></Allowed>}/>
+    <Route path="security" element={<Allowed module="security"><SecurityPage/></Allowed>}/>
+    <Route path="documents" element={<Allowed module="documents"><DocumentsPage/></Allowed>}/>
+    <Route path="delivery" element={<Allowed module="delivery"><DeliveryPage/></Allowed>}/>
+    <Route path="partner-api" element={<Allowed module="partner_api"><PartnerApiPage/></Allowed>}/>
+    <Route path="predictive-fleet" element={<Allowed module="predictive_fleet"><PredictiveFleetPage/></Allowed>}/>
+    <Route path="customer-service" element={<Allowed module="customer_service"><CustomerServicePage/></Allowed>}/>
+    <Route path="saas-billing" element={<Allowed module="saas_billing"><SaasBillingPage/></Allowed>}/>
+    <Route path="observability" element={<Allowed module="observability"><ObservabilityPage/></Allowed>}/>
+    <Route path="inventory-network" element={<Allowed module="inventory_network"><InventoryNetworkPage/></Allowed>}/>
     <Route path="returns" element={<Allowed module="returns"><ReturnsPage/></Allowed>}/>
     <Route path="inventory-control" element={<Allowed module="inventory_control"><InventoryControlPage/></Allowed>}/>
-    <Route path="supplier-performance" element={<Allowed module="supplier_performance"><SupplierPerformancePage/></Allowed>}/>
-    <Route path="portal" element={<Allowed module="portal"><PortalPage/></Allowed>}/>
+    <Route path="supplier-performance" element={<Allowed module="supplier_performance"><SupplierIntelligencePage/></Allowed>}/>
+    <Route path="portal" element={<Allowed module="portal"><DealerPortalPage/></Allowed>}/>
+    <Route path="portal-accounts" element={<Allowed module="portal"><PortalAccountsPage/></Allowed>}/>
     <Route path="customers" element={<Allowed module="crm"><CustomersPage/></Allowed>}/>
     <Route path="pricing" element={<Allowed module="pricing"><PricingPage/></Allowed>}/>
-    <Route path="analytics" element={<Allowed module="analytics"><AnalyticsPage/></Allowed>}/>
+    <Route path="analytics" element={<Allowed module="analytics"><CommandCenterPage/></Allowed>}/>
     <Route path="governance" element={<Allowed module="governance"><GovernancePage/></Allowed>}/>
     <Route path="*" element={<Navigate to="/app" replace/>}/>
   </Routes></Shell>

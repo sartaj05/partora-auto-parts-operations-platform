@@ -6,7 +6,7 @@ Partora is a demo-ready distributor operations portal built for large inventorie
 
 ## What is included
 
-The original landing/login/dashboard experience plus fifteen operational modules:
+The original landing/login/dashboard experience plus twenty-eight operational modules:
 
 - Barcode / QR inventory scanning and labels
 - Vehicle compatibility and OEM cross-reference
@@ -22,7 +22,41 @@ The original landing/login/dashboard experience plus fifteen operational modules
 - Returns, warranty inspection and RMA resolution
 - Cycle counts, stock availability and lot/serial traceability
 - Supplier performance, delivery metrics and procurement planning
+- Demand forecasting, safety stock and approval-ready purchase planning
+- Supplier RFQs, quote scoring and manager-approved offer selection
+- Goods receipt, damaged-stock handling and three-way supplier invoice matching
 - Customer/dealer self-service portal links
+- Integrations hub for accounting, messaging, shipping, payments and webhooks
+- Production mobile PWA device, sync and conflict controls
+- Multi-tenant organization, branch and approval permissions
+- Workflow automation rules with execution history
+- Fleet maintenance, service reminders and technician work orders
+- Security and compliance center with MFA, sessions and audit evidence
+- AI invoice and document processing with PO exception review
+- Delivery routes, shipment status and proof of delivery
+- B2B EDI and partner API portal with scoped keys and webhooks
+- Predictive fleet maintenance and component risk forecasting
+
+Client demonstration highlights:
+
+- VIN decoding with vehicle-aware compatible parts and stock confidence
+- Dealer self-service access for quotes, orders, invoices and account exposure
+- Branch capacity visibility with traceable multi-warehouse transfers
+- Supplier scorecards with contract renewal and shortage alerts
+- Executive operations command center with action queues and CSV reporting
+- Mobile warehouse queue with offline task sync
+- Supplier and dealer workflow notifications
+- Explainable AI operations copilot
+- GST, receivables and payment reconciliation
+- Warranty claims, root causes and supplier chargeback tracking
+
+Client demo additions:
+
+- Integrations hub with connection health and webhook delivery history
+- Production mobile PWA controls for offline queue and conflict review
+- Multi-tenant permissions with branch-level data boundaries
+- Workflow automation builder for operational alerts and approvals
+- Fleet maintenance workspace for vehicles and service work orders
 
 See `FEATURES.md` for the feature-by-feature scope.
 
