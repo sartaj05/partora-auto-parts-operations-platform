@@ -59,6 +59,9 @@ class Product(models.Model):
     bin_location = models.CharField(max_length=40, blank=True)
     updated_at = models.DateTimeField(auto_now=True)
 
+    class Meta:
+        indexes = [models.Index(fields=["name"]), models.Index(fields=["brand", "category"])]
+
     @property
     def stock_status(self):
         if self.stock_qty <= 0:

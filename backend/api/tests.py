@@ -380,3 +380,18 @@ class DemandPlanningApiTests(TestCase):
         quote.refresh_from_db()
         self.assertEqual(quote.status, "draft")
         self.assertFalse(PortalAccessLog.objects.filter(portal_token=token, action="approve_quote").exists())
+
+    def test_inventory_search_pagination_and_csv_import(self):
+        search = self.client.get("/api/inventory/?q=TEST&page=1&page_size=1", **self.auth_headers(self.manager))
+        self.assertEqual(search.status_code, 200)
+        self.assertEqual(search.json()["items"][0]["sku"], "TEST-001")
+        self.assertEqual(search.json()["page_size"], 1)
+        imported = self.client.post(
+            "/api/inventory/",
+            data={"action": "import", "rows": "sku,name,brand,category,price,stock_qty\nIMP-001,Imported Relay,VoltEdge,electrical,180,4"},
+            content_type="application/json",
+            **self.auth_headers(self.manager),
+        )
+        self.assertEqual(imported.status_code, 201)
+        self.assertEqual(imported.json()["summary"]["created"], 1)
+        self.assertTrue(Product.objects.filter(sku="IMP-001", stock_qty=4).exists())

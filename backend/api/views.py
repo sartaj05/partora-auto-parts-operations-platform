@@ -1,3 +1,5 @@
+import csv
+import io
 import json
 from datetime import date, datetime, timedelta
 from decimal import Decimal
@@ -100,14 +102,33 @@ def inventory_view(request):
         qs = Product.objects.select_related("supplier").all().order_by("name")
         q = request.GET.get("q", "").strip()
         if q:
-            qs = qs.filter(Q(sku__icontains=q) | Q(name__icontains=q) | Q(brand__icontains=q) | Q(category__icontains=q) | Q(supplier__name__icontains=q))
-        return JsonResponse({"items": [product_dict(p) for p in qs[:250]], "count": qs.count()})
+            qs = qs.filter(Q(sku__icontains=q) | Q(name__icontains=q) | Q(brand__icontains=q) | Q(category__icontains=q) | Q(barcode__icontains=q) | Q(supplier__name__icontains=q))
+        try: page=max(1,int(request.GET.get("page",1))); page_size=min(100,max(1,int(request.GET.get("page_size",50))))
+        except ValueError: return JsonResponse({"detail":"page and page_size must be whole numbers"},status=400)
+        count=qs.count(); start=(page-1)*page_size
+        return JsonResponse({"items": [product_dict(p) for p in qs[start:start+page_size]], "count": count, "page": page, "page_size": page_size, "pages": max(1,ceil(count/page_size))})
     if request.method == "POST":
         if request.api_user.profile.role not in {"admin", "manager"}:
             return JsonResponse({"detail": "Only admin or manager can add inventory"}, status=403)
         data = parse_body(request)
         if data is None:
             return JsonResponse({"detail": "Invalid JSON"}, status=400)
+        if str(data.get("action", "")).strip() == "import":
+            raw_rows=data.get("rows") or []
+            if isinstance(raw_rows,str): raw_rows=list(csv.DictReader(io.StringIO(raw_rows)))
+            if not isinstance(raw_rows,list) or not raw_rows: return JsonResponse({"detail":"Provide at least one catalog row"},status=400)
+            created=updated=0
+            try:
+                for row in raw_rows:
+                    sku=str(row.get("sku","")).strip().upper()
+                    if not sku or not str(row.get("name","")).strip(): raise ValueError("Every row needs sku and name")
+                    supplier=None
+                    if str(row.get("supplier","")).strip(): supplier,_=Supplier.objects.get_or_create(name=str(row["supplier"]).strip())
+                    product,was_created=Product.objects.update_or_create(sku=sku,defaults={"name":str(row["name"]).strip(),"brand":str(row.get("brand","Imported")).strip(),"category":str(row.get("category","auto")).strip(),"supplier":supplier,"price":float(row.get("price",0) or 0),"stock_qty":int(row.get("stock_qty",0) or 0),"reorder_level":int(row.get("reorder_level",10) or 10),"bin_location":str(row.get("bin_location","")).strip(),"barcode":str(row.get("barcode","")).strip() or None})
+                    created += int(was_created); updated += int(not was_created)
+            except Exception as exc: return JsonResponse({"detail":f"Catalog import failed: {exc}"},status=400)
+            record_audit(request,"bulk import","product","",f"created {created}, updated {updated}")
+            return JsonResponse({"summary":{"created":created,"updated":updated,"total":created+updated}},status=201)
         required = ["sku", "name", "brand", "category", "price"]
         if any(not str(data.get(k, "")).strip() for k in required):
             return JsonResponse({"detail": "SKU, name, brand, category and price are required"}, status=400)

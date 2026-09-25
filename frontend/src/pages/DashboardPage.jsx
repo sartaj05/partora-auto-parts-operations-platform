@@ -140,12 +140,14 @@ function Inventory() {
   const [loading,setLoading]=useState(true)
   const [error,setError]=useState('')
   const [creating,setCreating]=useState(false)
+  const [importing,setImporting]=useState(false)
   const canCreate=['admin','manager'].includes(user.role)
   useEffect(()=>{ loadEndpoint('/inventory/',user.role).then(r=>{setItems(r.data.items);setLoading(false)}).catch(e=>{setError(e.message);setLoading(false)}) },[user.role])
   const filtered=useMemo(()=>{ const q=query.toLowerCase().trim(); if(!q) return items; return items.filter(i=>[i.sku,i.name,i.brand,i.category,i.supplier].join(' ').toLowerCase().includes(q)) },[items,query])
   async function addItem(form){ const result=await createEndpoint('/inventory/',form,user.role); setItems(current=>[result.item,...current]) }
+  async function importCatalog(form){ await createEndpoint('/inventory/',{action:'import',rows:form.rows},user.role); const fresh=await loadEndpoint('/inventory/',user.role); setItems(fresh.data.items); setImporting(false) }
   return <>
-    <PageHeader eyebrow="Catalog" title="Inventory search" copy="Search across SKU, description, brand, category and supplier." action={canCreate?<button className="button app-action" onClick={()=>setCreating(true)}>+ Add item</button>:null} />
+    <PageHeader eyebrow="Catalog" title="Inventory search" copy="Search across SKU, barcode, description, brand, category and supplier." action={canCreate?<div className="inline-actions"><button className="button ghost app-action" onClick={()=>setImporting(true)}>Import catalog</button><button className="button app-action" onClick={()=>setCreating(true)}>+ Add item</button></div>:null} />
     <div className="toolbar"><div className="searchbox">⌕<input placeholder="Search brake pad, MCB-C32, supplier…" value={query} onChange={e=>setQuery(e.target.value)}/></div><span>{filtered.length} items</span></div>
     {loading?<Loading/>:error?<ErrorBox message={error}/>:<div className="table-card"><table><thead><tr><th>Part</th><th>Category</th><th>Supplier</th><th>Location</th><th>Price</th><th>Stock</th><th>Status</th></tr></thead><tbody>{filtered.map(i=><tr key={i.id}><td><b>{i.name}</b><small>{i.sku} · {i.brand}</small></td><td className="capitalize">{i.category}</td><td>{i.supplier}</td><td>{i.bin_location}</td><td>{money(i.price)}</td><td><b>{i.stock_qty}</b><small>Reorder {i.reorder_level}</small></td><td><StatusBadge value={i.stock_status}/></td></tr>)}</tbody></table></div>}
     {creating && <CreateModal title="Add catalog item" copy="Create a searchable SKU with opening stock." submitLabel="Add item" onClose={()=>setCreating(false)} onSubmit={addItem} initial={{category:'auto',stock_qty:0,reorder_level:10}} fields={[
@@ -155,6 +157,7 @@ function Inventory() {
       {name:'price',label:'Unit price',type:'number',required:true,min:'0',step:'0.01'}, {name:'stock_qty',label:'Opening stock',type:'number',min:'0'},
       {name:'reorder_level',label:'Reorder level',type:'number',min:'0'}
     ]}/>} 
+    {importing && <CreateModal title="Import catalog" copy="Paste CSV with headers: sku,name,brand,category,price,stock_qty,reorder_level,bin_location,barcode,supplier." submitLabel="Import rows" onClose={()=>setImporting(false)} onSubmit={importCatalog} fields={[{name:'rows',label:'Catalog CSV',type:'textarea',required:true,span:2,rows:9,placeholder:'sku,name,brand,category,price\nNEW-001,Relay,VoltEdge,electrical,180'}]}/>} 
   </>
 }
 
