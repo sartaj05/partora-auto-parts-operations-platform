@@ -75,6 +75,7 @@ const fallback = {
   '/integrations/': () => integrationsState,
   '/pwa-admin/': () => pwaState,
   '/tenancy/': () => tenantState,
+  '/permissions/': () => ({ roles:['admin','manager','sales','store'], actions:['view','create','edit','approve','export'], modules:[] }),
   '/automation/': () => automationState,
   '/fleet/': () => fleetState,
   '/security/': () => securityState,

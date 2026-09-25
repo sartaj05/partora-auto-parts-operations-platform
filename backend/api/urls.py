@@ -29,6 +29,7 @@ urlpatterns = [
     path("integrations/", views.integrations_view),
     path("pwa-admin/", views.pwa_admin_view),
     path("tenancy/", views.tenancy_view),
+    path("permissions/", views.permissions_view),
     path("automation/", views.automation_view),
     path("fleet/", views.fleet_view),
     path("security/", views.security_view),

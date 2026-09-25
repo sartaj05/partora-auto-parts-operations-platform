@@ -513,3 +513,10 @@ class DemandPlanningApiTests(TestCase):
         self.assertFalse(response.json()["permissions"]["security:view"])
         self.assertTrue(PermissionDefinition.objects.filter(module="finance", action="approve").exists())
         self.assertTrue(RolePermission.objects.filter(role="manager", permission__module="finance", allowed=True).exists())
+
+    def test_admin_can_edit_permission_matrix_but_manager_cannot(self):
+        denied = self.client.post("/api/permissions/", data={"action": "update", "role": "sales", "module": "finance", "permission": "export", "allowed": True}, content_type="application/json", **self.auth_headers(self.manager))
+        self.assertEqual(denied.status_code, 403)
+        allowed = self.client.post("/api/permissions/", data={"action": "update", "role": "sales", "module": "finance", "permission": "export", "allowed": True}, content_type="application/json", **self.auth_headers(self.admin))
+        self.assertEqual(allowed.status_code, 200)
+        self.assertTrue(allowed.json()["item"]["allowed"])

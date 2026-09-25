@@ -14,7 +14,7 @@ from django.http import JsonResponse
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 from .auth import ROLE_MODULES, api_login_required, get_current_organization, get_effective_role, get_permission_map, has_permission, issue_token, roles_allowed
-from .models import Product, Quotation, QuotationItem, StockMovement, Supplier, SupplierContract, VehicleFitment, PurchaseOrder, PurchaseOrderItem, PurchaseOrderStatusEvent, GoodsReceipt, GoodsReceiptLine, SupplierInvoice, Warehouse, WarehouseStock, StockTransfer, SalesOrder, SalesOrderItem, Invoice, Payment, FinanceTaxRule, ReturnRequest, InventoryCount, InventoryCountLine, ProductLot, SupplierPriceSnapshot, Customer, CustomerPortalToken, PortalAccessLog, PriceRule, Notification, ApprovalRequest, AuditLog, DemandHistory, PurchasePlan, RFQ, RFQOffer, IntegrationConnection, WebhookSubscription, IntegrationLog, WebhookDelivery, PwaDevice, SyncConflict, MobileTask, AutomationRule, AutomationRun, FleetVehicle, FleetWorkOrder, SupportTicket, SupportCommunication, DeliveryRoute, Shipment, Organization, OrganizationMembership, OrganizationInvitation, StockLedgerEntry, StockReservation
+from .models import Product, Quotation, QuotationItem, StockMovement, Supplier, SupplierContract, VehicleFitment, PurchaseOrder, PurchaseOrderItem, PurchaseOrderStatusEvent, GoodsReceipt, GoodsReceiptLine, SupplierInvoice, Warehouse, WarehouseStock, StockTransfer, SalesOrder, SalesOrderItem, Invoice, Payment, FinanceTaxRule, ReturnRequest, InventoryCount, InventoryCountLine, ProductLot, SupplierPriceSnapshot, Customer, CustomerPortalToken, PortalAccessLog, PriceRule, Notification, ApprovalRequest, AuditLog, DemandHistory, PurchasePlan, RFQ, RFQOffer, IntegrationConnection, WebhookSubscription, IntegrationLog, WebhookDelivery, PwaDevice, SyncConflict, MobileTask, AutomationRule, AutomationRun, FleetVehicle, FleetWorkOrder, SupportTicket, SupportCommunication, DeliveryRoute, Shipment, Organization, OrganizationMembership, OrganizationInvitation, StockLedgerEntry, StockReservation, PermissionDefinition, RolePermission, Profile
 from .serializers import product_dict, quotation_dict, supplier_dict
 
 def parse_body(request):
@@ -635,6 +635,34 @@ def tenancy_view(request):
             item={"id":invite.id,"name":invite.email,"email":invite.email,"role":invite.role,"branch":branch.code if branch else "All branches","approval_limit":float(invite.approval_limit),"status":invite.status}
         except Exception as exc: return JsonResponse({"detail":f"Could not invite user: {exc}"},status=400)
     record_audit(request,"tenant administration","organization",item["id"],action); return JsonResponse({"item":item},status=200 if action=="role" else 201)
+
+
+@csrf_exempt
+@roles_allowed("admin")
+def permissions_view(request):
+    if request.method == "GET":
+        definitions = list(PermissionDefinition.objects.all())
+        grants = {(grant.role, grant.permission_id): grant.allowed for grant in RolePermission.objects.select_related("permission")}
+        modules = {}
+        for permission in definitions:
+            modules.setdefault(permission.module, {"module": permission.module, "label": permission.module.replace("_", " ").title(), "actions": {}})
+            modules[permission.module]["actions"][permission.action] = {
+                role: bool(grants.get((role, permission.id), has_permission(request.api_user, permission.module, permission.action, request.organization)))
+                for role in ("admin", "manager", "sales", "store")
+            }
+        return JsonResponse({"roles": ["admin", "manager", "sales", "store"], "actions": ["view", "create", "edit", "approve", "export"], "modules": list(modules.values())})
+    data = parse_body(request) or {}
+    role = str(data.get("role", "")).strip()
+    module = str(data.get("module", "")).strip()
+    action = str(data.get("permission", data.get("action", ""))).strip()
+    if role not in {choice[0] for choice in Profile.ROLE_CHOICES} or action not in {choice[0] for choice in PermissionDefinition.ACTION_CHOICES}:
+        return JsonResponse({"detail": "Invalid role or permission action"}, status=400)
+    permission = PermissionDefinition.objects.filter(module=module, action=action).first()
+    if not permission:
+        return JsonResponse({"detail": "Unknown module permission"}, status=400)
+    grant, _ = RolePermission.objects.update_or_create(role=role, permission=permission, defaults={"allowed": bool(data.get("allowed")), "updated_by": request.api_user})
+    record_audit(request, "permission policy change", "permission", grant.id, f"{role} {module}.{action}={grant.allowed}")
+    return JsonResponse({"item": {"role": role, "module": module, "permission": action, "allowed": grant.allowed}})
 
 @csrf_exempt
 @roles_allowed("admin", "manager")

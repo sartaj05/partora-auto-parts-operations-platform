@@ -4,9 +4,10 @@ import { createEndpoint, loadEndpoint } from '../api/client'
 import { useAuth } from '../context/AuthContext'
 import CreateModal from '../components/CreateModal'
 import StatusBadge from '../components/StatusBadge'
-import { BarcodePage, VinFitmentPage, MobileWarehousePage, PurchaseOrdersPage, ReceivingPage, WarehouseControlPage, WarehousesPage, ReorderPage, DemandPlanningPage, RFQPage, SalesFlowPage, FulfillmentPage, NotificationsPage, CopilotPage, FinancePage, WarrantyIntelligencePage, ReturnsPage, InventoryControlPage, SupplierIntelligencePage, DealerPortalPage, PortalPage, CustomersPage, PricingPage, CommandCenterPage, GovernancePage, IntegrationsPage, PwaAdminPage, TenancyPage, AutomationPage, FleetPage, SecurityPage, DocumentsPage, DeliveryPage, PartnerApiPage, PredictiveFleetPage, CustomerServicePage, SaasBillingPage, ObservabilityPage, InventoryNetworkPage } from './OperationsPages'
+import { BarcodePage, VinFitmentPage, MobileWarehousePage, PurchaseOrdersPage, ReceivingPage, WarehouseControlPage, WarehousesPage, ReorderPage, DemandPlanningPage, RFQPage, SalesFlowPage, FulfillmentPage, NotificationsPage, CopilotPage, FinancePage, WarrantyIntelligencePage, ReturnsPage, InventoryControlPage, SupplierIntelligencePage, DealerPortalPage, PortalPage, CustomersPage, PricingPage, CommandCenterPage, GovernancePage, IntegrationsPage, PwaAdminPage, TenancyPage, PermissionMatrixPage, AutomationPage, FleetPage, SecurityPage, DocumentsPage, DeliveryPage, PartnerApiPage, PredictiveFleetPage, CustomerServicePage, SaasBillingPage, ObservabilityPage, InventoryNetworkPage } from './OperationsPages'
 
 const nav = [
+  ['permissions','/app/permissions','Permission matrix','P'],
   ['customer_service','/app/customer-service','Customer service','?'],
   ['saas_billing','/app/saas-billing','SaaS billing','$'],
   ['observability','/app/observability','Reliability','~'],
@@ -211,6 +212,7 @@ function Allowed({ module, children }) { const { modules }=useAuth(); return mod
 export default function DashboardPage(){
   return <Shell><Routes>
     <Route index element={<Overview/>}/>
+    <Route path="permissions" element={<Allowed module="permissions"><PermissionMatrixPage/></Allowed>}/>
     <Route path="inventory" element={<Allowed module="inventory"><Inventory/></Allowed>}/>
     <Route path="quotations" element={<Allowed module="quotations"><Quotations/></Allowed>}/>
     <Route path="suppliers" element={<Allowed module="suppliers"><Suppliers/></Allowed>}/>
