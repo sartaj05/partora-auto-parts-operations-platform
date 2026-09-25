@@ -11,7 +11,6 @@ ROLE_MODULES = {
     "manager": ["dashboard", "inventory", "quotations", "suppliers", "stock", "barcodes", "fitments", "purchase_orders", "receiving", "mobile_warehouse", "warehouses", "reorder", "demand_planning", "rfq", "sales_flow", "fulfillment", "notifications", "copilot", "finance", "warranty_intelligence", "integrations", "tenancy", "automation", "fleet", "delivery", "customer_service", "inventory_network", "returns", "inventory_control", "supplier_performance", "portal", "crm", "pricing", "analytics", "governance"],
     "sales": ["dashboard", "inventory", "quotations", "barcodes", "fitments", "sales_flow", "fulfillment", "notifications", "copilot", "customer_service", "portal", "crm", "pricing", "analytics"],
     "store": ["dashboard", "inventory", "stock", "barcodes", "fitments", "purchase_orders", "receiving", "mobile_warehouse", "warehouses", "reorder", "fulfillment", "notifications", "returns", "inventory_control"],
-    "client": ["client_portal"],
 }
 
 def issue_token(user):
