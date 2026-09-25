@@ -10,7 +10,7 @@ from django.http import JsonResponse
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 from .auth import api_login_required, get_current_organization, issue_token, roles_allowed
-from .models import Product, Quotation, QuotationItem, StockMovement, Supplier, SupplierContract, VehicleFitment, PurchaseOrder, PurchaseOrderItem, GoodsReceipt, GoodsReceiptLine, SupplierInvoice, Warehouse, WarehouseStock, StockTransfer, SalesOrder, SalesOrderItem, Invoice, Payment, ReturnRequest, InventoryCount, InventoryCountLine, ProductLot, SupplierPriceSnapshot, Customer, CustomerPortalToken, PriceRule, Notification, ApprovalRequest, AuditLog, DemandHistory, PurchasePlan, RFQ, RFQOffer, IntegrationConnection, WebhookSubscription, IntegrationLog, PwaDevice, SyncConflict, AutomationRule, AutomationRun, FleetVehicle, FleetWorkOrder, SupportTicket, SupportCommunication, DeliveryRoute, Shipment, Organization, OrganizationMembership, OrganizationInvitation, StockLedgerEntry, StockReservation
+from .models import Product, Quotation, QuotationItem, StockMovement, Supplier, SupplierContract, VehicleFitment, PurchaseOrder, PurchaseOrderItem, GoodsReceipt, GoodsReceiptLine, SupplierInvoice, Warehouse, WarehouseStock, StockTransfer, SalesOrder, SalesOrderItem, Invoice, Payment, ReturnRequest, InventoryCount, InventoryCountLine, ProductLot, SupplierPriceSnapshot, Customer, CustomerPortalToken, PortalAccessLog, PriceRule, Notification, ApprovalRequest, AuditLog, DemandHistory, PurchasePlan, RFQ, RFQOffer, IntegrationConnection, WebhookSubscription, IntegrationLog, PwaDevice, SyncConflict, AutomationRule, AutomationRun, FleetVehicle, FleetWorkOrder, SupportTicket, SupportCommunication, DeliveryRoute, Shipment, Organization, OrganizationMembership, OrganizationInvitation, StockLedgerEntry, StockReservation
 from .serializers import product_dict, quotation_dict, supplier_dict
 
 ROLE_MODULES = {
@@ -1341,15 +1341,28 @@ def portal_view(request):
         access=CustomerPortalToken.objects.select_related("customer").get(token=token_value,active=True,expires_at__gt=timezone.now())
     except CustomerPortalToken.DoesNotExist:
         return JsonResponse({"detail":"Portal link is invalid or expired"},status=401)
-    if request.method == "GET": return JsonResponse(portal_payload(access.customer,access.token))
+    def belongs(customer_name, customer_company):
+        return customer_name == access.customer.name or (customer_company and customer_company == access.customer.company)
+    def log_access(action, entity="", entity_id=""):
+        PortalAccessLog.objects.create(portal_token=access,action=action,entity=entity,entity_id=entity_id,ip_address=request.META.get("REMOTE_ADDR"))
+    if request.method == "GET":
+        log_access("view")
+        return JsonResponse(portal_payload(access.customer,access.token))
     data=parse_body(request) or {}; action=str(data.get("action",""))
     try:
         if action == "approve_quote":
-            quote=Quotation.objects.get(id=int(data["quote_id"])); quote.status="approved"; quote.save(update_fields=["status"]); result={"quote_id":quote.id,"status":quote.status}
+            quote=Quotation.objects.get(id=int(data["quote_id"]))
+            if not belongs(quote.customer_name,quote.customer_company): raise ValueError("Quote does not belong to this customer")
+            quote.status="approved"; quote.save(update_fields=["status"]); result={"quote_id":quote.id,"status":quote.status}
+            log_access(action,"quotation",quote.id)
         elif action == "repeat_order":
-            order=SalesOrder.objects.get(id=int(data["order_id"])); quote=Quotation.objects.create(quote_no=f"QT-{timezone.now():%y%m%d}-{uuid4().hex[:4].upper()}",customer_name=access.customer.name,customer_company=access.customer.company,total=order.total,status="draft",valid_until=timezone.localdate()+timedelta(days=7),created_by=None); result={"quote_no":quote.quote_no,"status":quote.status}
+            order=SalesOrder.objects.get(id=int(data["order_id"]))
+            if not belongs(order.customer_name,order.customer_company): raise ValueError("Order does not belong to this customer")
+            quote=Quotation.objects.create(quote_no=f"QT-{timezone.now():%y%m%d}-{uuid4().hex[:4].upper()}",customer_name=access.customer.name,customer_company=access.customer.company,total=order.total,status="draft",valid_until=timezone.localdate()+timedelta(days=7),created_by=None); result={"quote_no":quote.quote_no,"status":quote.status}; log_access(action,"sales_order",order.id)
         elif action == "download_invoice":
-            invoice=Invoice.objects.get(id=int(data["invoice_id"])); result=invoice_dict(invoice)
+            invoice=Invoice.objects.select_related("sales_order").get(id=int(data["invoice_id"]))
+            if not belongs(invoice.sales_order.customer_name,invoice.sales_order.customer_company): raise ValueError("Invoice does not belong to this customer")
+            result=invoice_dict(invoice); log_access(action,"invoice",invoice.id)
         else: raise ValueError("Unknown portal action")
     except Exception as exc:
         return JsonResponse({"detail":f"Could not complete portal action: {exc}"},status=400)

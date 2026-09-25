@@ -2,9 +2,10 @@ from datetime import date, timedelta
 
 from django.contrib.auth.models import User
 from django.test import TestCase
+from django.utils import timezone
 
 from .auth import issue_token
-from .models import AutomationRule, DemandHistory, FleetVehicle, GoodsReceipt, IntegrationConnection, Organization, OrganizationInvitation, OrganizationMembership, Product, Profile, PurchaseOrder, PurchasePlan, QuotationItem, RFQ, RFQOffer, SalesOrder, SalesOrderItem, StockLedgerEntry, StockReservation, SupportTicket, Supplier, SupplierContract, SupplierInvoice, VehicleFitment
+from .models import AutomationRule, Customer, CustomerPortalToken, DemandHistory, FleetVehicle, GoodsReceipt, IntegrationConnection, Organization, OrganizationInvitation, OrganizationMembership, PortalAccessLog, Product, Profile, PurchaseOrder, PurchasePlan, QuotationItem, Quotation, RFQ, RFQOffer, SalesOrder, SalesOrderItem, StockLedgerEntry, StockReservation, SupportTicket, Supplier, SupplierContract, SupplierInvoice, VehicleFitment
 
 
 class DemandPlanningApiTests(TestCase):
@@ -365,3 +366,17 @@ class DemandPlanningApiTests(TestCase):
         )
         self.assertEqual(converted.status_code, 201)
         self.assertEqual(converted.json()["item"]["items"][0]["sku"], "TEST-001")
+
+    def test_customer_portal_cannot_access_another_customer_record(self):
+        customer = Customer.objects.create(name="Portal Customer", company="Portal Co", email="portal@example.com")
+        token = CustomerPortalToken.objects.create(token="portal-test-token", customer=customer, expires_at=timezone.now() + timedelta(days=1), created_by=self.manager)
+        quote = Quotation.objects.create(quote_no="QT-PORTAL-001", customer_name="Other Customer", customer_company="Other Co", total=100, valid_until=date.today() + timedelta(days=7), created_by=self.manager)
+        response = self.client.post(
+            "/api/portal/",
+            data={"token": token.token, "action": "approve_quote", "quote_id": quote.id},
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 400)
+        quote.refresh_from_db()
+        self.assertEqual(quote.status, "draft")
+        self.assertFalse(PortalAccessLog.objects.filter(portal_token=token, action="approve_quote").exists())

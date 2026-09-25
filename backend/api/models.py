@@ -696,3 +696,12 @@ class StockReservation(models.Model):
     idempotency_key = models.CharField(max_length=100, unique=True, null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     released_at = models.DateTimeField(null=True, blank=True)
+
+
+class PortalAccessLog(models.Model):
+    portal_token = models.ForeignKey(CustomerPortalToken, on_delete=models.CASCADE, related_name="access_logs")
+    action = models.CharField(max_length=80)
+    entity = models.CharField(max_length=80, blank=True)
+    entity_id = models.CharField(max_length=80, blank=True)
+    ip_address = models.GenericIPAddressField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
