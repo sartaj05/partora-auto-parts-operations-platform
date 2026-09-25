@@ -656,3 +656,32 @@ for _tenant_model in [
     SupportTicket, SupportCommunication, DeliveryRoute, Shipment,
 ]:
     _tenant_model.add_to_class("organization", models.ForeignKey(Organization, on_delete=models.CASCADE, null=True, blank=True, related_name=f"{_tenant_model.__name__.lower()}_records"))
+
+
+class StockLedgerEntry(models.Model):
+    MOVEMENT_CHOICES = [("in", "Stock in"), ("out", "Stock out"), ("adjustment", "Adjustment"), ("reserve", "Reserve"), ("release", "Release")]
+    organization = models.ForeignKey(Organization, on_delete=models.CASCADE, null=True, blank=True, related_name="stock_ledger")
+    product = models.ForeignKey(Product, on_delete=models.PROTECT, related_name="ledger_entries")
+    warehouse = models.ForeignKey(Warehouse, on_delete=models.PROTECT, null=True, blank=True, related_name="ledger_entries")
+    movement_type = models.CharField(max_length=20, choices=MOVEMENT_CHOICES)
+    quantity = models.IntegerField()
+    balance_qty = models.IntegerField()
+    reference = models.CharField(max_length=80, blank=True)
+    idempotency_key = models.CharField(max_length=100, unique=True, null=True, blank=True)
+    created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name="stock_ledger_entries")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+
+class StockReservation(models.Model):
+    STATUS_CHOICES = [("active", "Active"), ("released", "Released"), ("fulfilled", "Fulfilled"), ("cancelled", "Cancelled")]
+    organization = models.ForeignKey(Organization, on_delete=models.CASCADE, null=True, blank=True, related_name="stock_reservations")
+    sales_order = models.ForeignKey(SalesOrder, on_delete=models.CASCADE, related_name="stock_reservations")
+    product = models.ForeignKey(Product, on_delete=models.PROTECT, related_name="stock_reservations")
+    quantity = models.PositiveIntegerField()
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="active")
+    idempotency_key = models.CharField(max_length=100, unique=True, null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    released_at = models.DateTimeField(null=True, blank=True)

@@ -4,7 +4,7 @@ from django.contrib.auth.models import User
 from django.test import TestCase
 
 from .auth import issue_token
-from .models import AutomationRule, DemandHistory, FleetVehicle, GoodsReceipt, IntegrationConnection, Organization, OrganizationInvitation, OrganizationMembership, Product, Profile, PurchaseOrder, PurchasePlan, RFQ, RFQOffer, SupportTicket, Supplier, SupplierContract, SupplierInvoice, VehicleFitment
+from .models import AutomationRule, DemandHistory, FleetVehicle, GoodsReceipt, IntegrationConnection, Organization, OrganizationInvitation, OrganizationMembership, Product, Profile, PurchaseOrder, PurchasePlan, RFQ, RFQOffer, SalesOrder, SalesOrderItem, StockLedgerEntry, StockReservation, SupportTicket, Supplier, SupplierContract, SupplierInvoice, VehicleFitment
 
 
 class DemandPlanningApiTests(TestCase):
@@ -307,3 +307,38 @@ class DemandPlanningApiTests(TestCase):
         )
         visible = self.client.get("/api/fleet/", **self.auth_headers(self.manager)).json()["vehicles"]
         self.assertFalse(any(item["registration"] == "OTHER 0001" for item in visible))
+
+    def test_stock_ledger_is_idempotent_and_reservation_is_not_double_counted(self):
+        response = self.client.post(
+            "/api/stock/",
+            data={"sku": "TEST-001", "type": "in", "quantity": 4, "reference": "RECEIPT-1", "idempotency_key": "stock-key-1"},
+            content_type="application/json",
+            **self.auth_headers(self.store),
+        )
+        self.assertEqual(response.status_code, 201)
+        self.product.refresh_from_db()
+        self.assertEqual(self.product.stock_qty, 6)
+        repeat = self.client.post(
+            "/api/stock/",
+            data={"sku": "TEST-001", "type": "in", "quantity": 4, "reference": "RECEIPT-1", "idempotency_key": "stock-key-1"},
+            content_type="application/json",
+            **self.auth_headers(self.store),
+        )
+        self.assertEqual(repeat.status_code, 200)
+        self.product.refresh_from_db()
+        self.assertEqual(self.product.stock_qty, 6)
+        self.assertEqual(StockLedgerEntry.objects.filter(idempotency_key="stock-key-1").count(), 1)
+
+        order = SalesOrder.objects.create(order_no="SO-TEST-001", customer_name="Test Customer", total=100, created_by=self.manager)
+        SalesOrderItem.objects.create(sales_order=order, product=self.product, quantity=1, unit_price=100, line_total=100)
+        for _ in range(2):
+            reserve = self.client.post(
+                "/api/fulfillment/",
+                data={"action": "reserve", "order_id": order.id, "idempotency_key": "reserve-key-1"},
+                content_type="application/json",
+                **self.auth_headers(self.manager),
+            )
+            self.assertEqual(reserve.status_code, 200)
+        self.product.refresh_from_db()
+        self.assertEqual(self.product.reserved_qty, 1)
+        self.assertEqual(StockReservation.objects.filter(sales_order=order, status="active").count(), 1)

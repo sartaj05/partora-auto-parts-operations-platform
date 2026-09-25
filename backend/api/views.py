@@ -10,7 +10,7 @@ from django.http import JsonResponse
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 from .auth import api_login_required, get_current_organization, issue_token, roles_allowed
-from .models import Product, Quotation, StockMovement, Supplier, SupplierContract, VehicleFitment, PurchaseOrder, PurchaseOrderItem, GoodsReceipt, GoodsReceiptLine, SupplierInvoice, Warehouse, WarehouseStock, StockTransfer, SalesOrder, SalesOrderItem, Invoice, Payment, ReturnRequest, InventoryCount, InventoryCountLine, ProductLot, SupplierPriceSnapshot, Customer, CustomerPortalToken, PriceRule, Notification, ApprovalRequest, AuditLog, DemandHistory, PurchasePlan, RFQ, RFQOffer, IntegrationConnection, WebhookSubscription, IntegrationLog, PwaDevice, SyncConflict, AutomationRule, AutomationRun, FleetVehicle, FleetWorkOrder, SupportTicket, SupportCommunication, DeliveryRoute, Shipment, Organization, OrganizationMembership, OrganizationInvitation
+from .models import Product, Quotation, StockMovement, Supplier, SupplierContract, VehicleFitment, PurchaseOrder, PurchaseOrderItem, GoodsReceipt, GoodsReceiptLine, SupplierInvoice, Warehouse, WarehouseStock, StockTransfer, SalesOrder, SalesOrderItem, Invoice, Payment, ReturnRequest, InventoryCount, InventoryCountLine, ProductLot, SupplierPriceSnapshot, Customer, CustomerPortalToken, PriceRule, Notification, ApprovalRequest, AuditLog, DemandHistory, PurchasePlan, RFQ, RFQOffer, IntegrationConnection, WebhookSubscription, IntegrationLog, PwaDevice, SyncConflict, AutomationRule, AutomationRun, FleetVehicle, FleetWorkOrder, SupportTicket, SupportCommunication, DeliveryRoute, Shipment, Organization, OrganizationMembership, OrganizationInvitation, StockLedgerEntry, StockReservation
 from .serializers import product_dict, quotation_dict, supplier_dict
 
 ROLE_MODULES = {
@@ -174,36 +174,43 @@ def quotations_view(request):
 @roles_allowed("admin", "manager", "store")
 def stock_view(request):
     if request.method == "GET":
-        movements = StockMovement.objects.select_related("product").order_by("-created_at")[:25]
+        movements = StockLedgerEntry.objects.select_related("product").filter(organization=request.organization).order_by("-created_at")[:25]
         return JsonResponse({"items": [{
             "id": m.id, "sku": m.product.sku, "product": m.product.name, "type": m.movement_type,
-            "quantity": m.quantity, "reference": m.reference, "created_at": m.created_at.isoformat(),
+            "quantity": abs(m.quantity), "reference": m.reference, "created_at": m.created_at.isoformat(),
         } for m in movements]})
     if request.method == "POST":
         data = parse_body(request)
         if data is None:
             return JsonResponse({"detail": "Invalid JSON"}, status=400)
         try:
-            product = Product.objects.get(sku=str(data.get("sku", "")).strip().upper())
+            idempotency_key = str(data.get("idempotency_key") or request.headers.get("Idempotency-Key") or uuid4().hex)
+            existing = StockLedgerEntry.objects.filter(idempotency_key=idempotency_key, organization=request.organization).select_related("product").first()
+            if existing:
+                return JsonResponse({"item": {"id": existing.id, "sku": existing.product.sku, "product": existing.product.name, "type": existing.movement_type, "quantity": abs(existing.quantity), "reference": existing.reference, "created_at": existing.created_at.isoformat()}, "idempotent": True})
+            product = Product.objects.select_for_update().get(sku=str(data.get("sku", "")).strip().upper())
             movement_type = str(data.get("type", "in"))
             quantity = abs(int(data.get("quantity", 0)))
             if quantity == 0:
                 raise ValueError("Quantity must be greater than zero")
-            if movement_type == "in":
-                product.stock_qty += quantity
+            previous_qty = product.stock_qty
+            if movement_type == "in": delta = quantity
             elif movement_type == "out":
-                product.stock_qty = max(0, product.stock_qty - quantity)
-            elif movement_type == "adjustment":
-                product.stock_qty = quantity
+                if product.stock_qty - product.reserved_qty < quantity: raise ValueError("Insufficient available stock")
+                delta = -quantity
+            elif movement_type == "adjustment": delta = quantity - product.stock_qty
             else:
                 raise ValueError("Invalid movement type")
-            product.save(update_fields=["stock_qty", "updated_at"])
-            movement = StockMovement.objects.create(product=product, movement_type=movement_type, quantity=quantity, reference=str(data.get("reference", "")).strip())
+            with transaction.atomic():
+                product.stock_qty = product.stock_qty + delta
+                product.save(update_fields=["stock_qty", "updated_at"])
+                ledger = StockLedgerEntry.objects.create(organization=request.organization, product=product, warehouse=request.branch, movement_type=movement_type, quantity=delta, balance_qty=product.stock_qty, idempotency_key=idempotency_key, reference=str(data.get("reference", "")).strip(), created_by=request.api_user)
+                movement = StockMovement.objects.create(product=product, movement_type=movement_type, quantity=quantity, reference=str(data.get("reference", "")).strip())
         except Exception as exc:
             return JsonResponse({"detail": f"Could not record stock movement: {exc}"}, status=400)
         record_audit(request, "stock movement", "product", product.id, f"{movement_type} {quantity} / {movement.reference}")
         return JsonResponse({"item": {
-            "id": movement.id, "sku": product.sku, "product": product.name, "type": movement.movement_type,
+            "id": ledger.id, "sku": product.sku, "product": product.name, "type": movement.movement_type,
             "quantity": movement.quantity, "reference": movement.reference, "created_at": movement.created_at.isoformat(),
         }}, status=201)
     return JsonResponse({"detail": "Method not allowed"}, status=405)
@@ -723,27 +730,30 @@ def predictive_fleet_view(request):
 @roles_allowed("admin", "manager", "store")
 def warehouses_view(request):
     if request.method == "GET":
-        warehouses=Warehouse.objects.filter(active=True).order_by("code")
+        warehouses=Warehouse.objects.filter(active=True,organization=request.organization).order_by("code")
         wh_items=[]
         for wh in warehouses:
             wh_items.append({"id":wh.id,"code":wh.code,"name":wh.name,"address":wh.address,"sku_count":wh.stocks.count(),"units":wh.stocks.aggregate(total=Sum("quantity"))["total"] or 0})
-        transfers=[{"id":t.id,"reference":t.reference,"from_warehouse":t.from_warehouse.code,"to_warehouse":t.to_warehouse.code,"sku":t.product.sku,"product":t.product.name,"quantity":t.quantity,"status":t.status,"created_at":t.created_at.isoformat()} for t in StockTransfer.objects.select_related("from_warehouse","to_warehouse","product").order_by("-created_at")[:40]]
+        transfers=[{"id":t.id,"reference":t.reference,"from_warehouse":t.from_warehouse.code,"to_warehouse":t.to_warehouse.code,"sku":t.product.sku,"product":t.product.name,"quantity":t.quantity,"status":t.status,"created_at":t.created_at.isoformat()} for t in StockTransfer.objects.select_related("from_warehouse","to_warehouse","product").filter(from_warehouse__organization=request.organization).order_by("-created_at")[:40]]
         return JsonResponse({"warehouses":wh_items,"transfers":transfers})
     if request.method == "POST":
         data=parse_body(request) or {}; action=str(data.get("action","transfer"))
         if action == "warehouse":
             try:
-                wh=Warehouse.objects.create(code=str(data["code"]).strip().upper(),name=str(data["name"]).strip(),address=str(data.get("address","")).strip())
+                wh=Warehouse.objects.create(organization=request.organization,code=str(data["code"]).strip().upper(),name=str(data["name"]).strip(),address=str(data.get("address","")).strip())
             except Exception as exc:
                 return JsonResponse({"detail":f"Could not create warehouse: {exc}"},status=400)
             return JsonResponse({"item":{"id":wh.id,"code":wh.code,"name":wh.name,"address":wh.address,"sku_count":0,"units":0}},status=201)
         try:
-            source=Warehouse.objects.get(code=str(data["from_warehouse"]).strip().upper()); target=Warehouse.objects.get(code=str(data["to_warehouse"]).strip().upper()); product=Product.objects.get(sku=str(data["sku"]).strip().upper()); qty=max(1,int(data.get("quantity",1)))
-            if source.id == target.id: raise ValueError("Source and destination must differ")
-            source_stock,_=WarehouseStock.objects.get_or_create(warehouse=source,product=product,defaults={"quantity":0}); target_stock,_=WarehouseStock.objects.get_or_create(warehouse=target,product=product,defaults={"quantity":0})
-            if source_stock.quantity < qty: raise ValueError("Insufficient stock at source warehouse")
-            source_stock.quantity-=qty; target_stock.quantity+=qty; source_stock.save(update_fields=["quantity"]); target_stock.save(update_fields=["quantity"])
-            transfer=StockTransfer.objects.create(reference=f"TR-{timezone.now():%y%m%d}-{uuid4().hex[:4].upper()}",from_warehouse=source,to_warehouse=target,product=product,quantity=qty,created_by=request.api_user)
+            with transaction.atomic():
+                source=Warehouse.objects.select_for_update().get(code=str(data["from_warehouse"]).strip().upper(),organization=request.organization); target=Warehouse.objects.select_for_update().get(code=str(data["to_warehouse"]).strip().upper(),organization=request.organization); product=Product.objects.select_for_update().get(sku=str(data["sku"]).strip().upper()); qty=max(1,int(data.get("quantity",1)))
+                if source.id == target.id: raise ValueError("Source and destination must differ")
+                source_stock,_=WarehouseStock.objects.get_or_create(warehouse=source,product=product,defaults={"quantity":0}); target_stock,_=WarehouseStock.objects.get_or_create(warehouse=target,product=product,defaults={"quantity":0})
+                source_stock=WarehouseStock.objects.select_for_update().get(id=source_stock.id); target_stock=WarehouseStock.objects.select_for_update().get(id=target_stock.id)
+                if source_stock.quantity < qty: raise ValueError("Insufficient stock at source warehouse")
+                source_stock.quantity-=qty; target_stock.quantity+=qty; source_stock.save(update_fields=["quantity"]); target_stock.save(update_fields=["quantity"])
+                transfer=StockTransfer.objects.create(reference=f"TR-{timezone.now():%y%m%d}-{uuid4().hex[:4].upper()}",from_warehouse=source,to_warehouse=target,product=product,quantity=qty,created_by=request.api_user)
+                key=uuid4().hex; StockLedgerEntry.objects.create(organization=request.organization,product=product,warehouse=source,movement_type="out",quantity=-qty,balance_qty=source_stock.quantity,reference=transfer.reference,idempotency_key=f"{key}:out",created_by=request.api_user); StockLedgerEntry.objects.create(organization=request.organization,product=product,warehouse=target,movement_type="in",quantity=qty,balance_qty=target_stock.quantity,reference=transfer.reference,idempotency_key=f"{key}:in",created_by=request.api_user)
         except Exception as exc:
             return JsonResponse({"detail":f"Could not transfer stock: {exc}"},status=400)
         return JsonResponse({"item":{"id":transfer.id,"reference":transfer.reference,"from_warehouse":source.code,"to_warehouse":target.code,"sku":product.sku,"product":product.name,"quantity":qty,"status":"completed","created_at":transfer.created_at.isoformat()}},status=201)
@@ -817,47 +827,59 @@ def fulfillment_view(request):
         return JsonResponse({"orders":[sales_order_dict(o) for o in orders],"invoices":[invoice_dict(i) for i in Invoice.objects.select_related("sales_order").prefetch_related("payments").order_by("-created_at")[:100]]})
     data=parse_body(request) or {}; action=str(data.get("action", "status"))
     try:
-        order=SalesOrder.objects.select_related("invoice").prefetch_related("items__product").get(id=int(data["order_id"]))
-        if action == "reserve":
-            if not order.items.exists(): raise ValueError("Add order line items before reserving stock")
-            for line in order.items.all():
-                if line.product.stock_qty-line.product.reserved_qty < line.quantity: raise ValueError(f"Insufficient available stock for {line.product.sku}")
-            for line in order.items.all():
-                line.product.reserved_qty += line.quantity
-                line.product.save(update_fields=["reserved_qty", "updated_at"])
-            order.reserved_at=timezone.now(); order.fulfillment_status="picking"; order.save(update_fields=["reserved_at","fulfillment_status"])
-            record_audit(request,"reserve stock","sales order",order.id,order.order_no)
-        elif action == "status":
-            status=str(data.get("status", "confirmed"))
-            allowed={"confirmed","picking","packed","dispatched","delivered","cancelled"}
-            if status not in allowed: raise ValueError("Invalid fulfillment status")
-            if status == "dispatched":
-                if not order.items.exists(): raise ValueError("Add order line items before dispatch")
-                for line in order.items.all():
-                    if line.product.stock_qty-line.product.reserved_qty < line.quantity: raise ValueError(f"Insufficient available stock for {line.product.sku}")
-                for line in order.items.all():
-                    line.product.stock_qty -= line.quantity
-                    line.product.reserved_qty=max(0,line.product.reserved_qty-line.quantity)
-                    line.product.save(update_fields=["stock_qty","reserved_qty","updated_at"])
-                    StockMovement.objects.create(product=line.product,movement_type="out",quantity=line.quantity,reference=order.order_no)
-                order.dispatched_at=timezone.now()
-            if status == "delivered": order.delivered_at=timezone.now()
-            order.fulfillment_status=status
-            order.status="fulfilled" if status in {"dispatched","delivered"} else ("cancelled" if status=="cancelled" else order.status)
-            order.save(update_fields=["fulfillment_status","status","dispatched_at","delivered_at"])
-            record_audit(request,"fulfillment status","sales order",order.id,f"{order.order_no} → {status}")
-        elif action == "payment":
-            invoice=getattr(order,"invoice",None)
-            if not invoice: raise ValueError("Issue the invoice before recording a payment")
-            amount=float(data.get("amount",0) or 0)
-            if amount <= 0: raise ValueError("Payment amount must be greater than zero")
-            paid=float(invoice.payments.aggregate(total=Sum("amount"))["total"] or 0)
-            if paid+amount > float(invoice.total): raise ValueError("Payment exceeds invoice balance")
-            Payment.objects.create(invoice=invoice,amount=amount,method=str(data.get("method","bank")),reference=str(data.get("reference","")).strip(),created_by=request.api_user)
-            total_paid=paid+amount; invoice.status="paid" if total_paid >= float(invoice.total) else "partial"; invoice.save(update_fields=["status"])
-            record_audit(request,"record payment","invoice",invoice.id,f"{invoice.invoice_no} / {amount}")
-        else:
-            raise ValueError("Unknown fulfillment action")
+        with transaction.atomic():
+            order=SalesOrder.objects.select_for_update().select_related("invoice").get(id=int(data["order_id"]))
+            if action == "reserve":
+                if not order.items.exists(): raise ValueError("Add order line items before reserving stock")
+                active_reservations=list(StockReservation.objects.filter(organization=request.organization,sales_order=order,status="active"))
+                if active_reservations:
+                    pass
+                else:
+                    lines=list(order.items.all())
+                    for line in lines:
+                        product=Product.objects.select_for_update().get(id=line.product_id)
+                        if product.stock_qty-product.reserved_qty < line.quantity: raise ValueError(f"Insufficient available stock for {product.sku}")
+                    request_key=str(data.get("idempotency_key") or request.headers.get("Idempotency-Key") or uuid4().hex)
+                    for line in lines:
+                        product=Product.objects.select_for_update().get(id=line.product_id)
+                        product.reserved_qty += line.quantity; product.save(update_fields=["reserved_qty","updated_at"])
+                        StockReservation.objects.create(organization=request.organization,sales_order=order,product=product,quantity=line.quantity,idempotency_key=f"{request_key}:{product.id}")
+                        StockLedgerEntry.objects.create(organization=request.organization,product=product,movement_type="reserve",quantity=line.quantity,balance_qty=product.stock_qty-product.reserved_qty,reference=order.order_no,idempotency_key=f"reserve:{request_key}:{product.id}",created_by=request.api_user)
+                    order.reserved_at=timezone.now(); order.fulfillment_status="picking"; order.save(update_fields=["reserved_at","fulfillment_status"])
+                record_audit(request,"reserve stock","sales order",order.id,order.order_no)
+            elif action == "status":
+                status=str(data.get("status", "confirmed")); allowed={"confirmed","picking","packed","dispatched","delivered","cancelled"}
+                if status not in allowed: raise ValueError("Invalid fulfillment status")
+                if status == "dispatched" and order.fulfillment_status not in {"dispatched","delivered"}:
+                    reservations=list(StockReservation.objects.select_for_update().filter(organization=request.organization,sales_order=order,status="active"))
+                    if not reservations: raise ValueError("Reserve stock before dispatch")
+                    for reservation in reservations:
+                        product=Product.objects.select_for_update().get(id=reservation.product_id)
+                        if product.stock_qty < reservation.quantity: raise ValueError(f"Insufficient stock for {product.sku}")
+                        product.stock_qty -= reservation.quantity; product.reserved_qty=max(0,product.reserved_qty-reservation.quantity); product.save(update_fields=["stock_qty","reserved_qty","updated_at"])
+                        StockMovement.objects.create(product=product,movement_type="out",quantity=reservation.quantity,reference=order.order_no)
+                        StockLedgerEntry.objects.create(organization=request.organization,product=product,movement_type="out",quantity=-reservation.quantity,balance_qty=product.stock_qty,reference=order.order_no,idempotency_key=f"dispatch:{order.id}:{product.id}",created_by=request.api_user)
+                        reservation.status="fulfilled"; reservation.released_at=timezone.now(); reservation.save(update_fields=["status","released_at"])
+                    order.dispatched_at=timezone.now()
+                if status == "cancelled":
+                    for reservation in StockReservation.objects.select_for_update().filter(organization=request.organization,sales_order=order,status="active"):
+                        product=Product.objects.select_for_update().get(id=reservation.product_id); product.reserved_qty=max(0,product.reserved_qty-reservation.quantity); product.save(update_fields=["reserved_qty","updated_at"])
+                        StockLedgerEntry.objects.create(organization=request.organization,product=product,movement_type="release",quantity=-reservation.quantity,balance_qty=product.stock_qty-product.reserved_qty,reference=order.order_no,idempotency_key=f"release:{order.id}:{product.id}",created_by=request.api_user)
+                        reservation.status="cancelled"; reservation.released_at=timezone.now(); reservation.save(update_fields=["status","released_at"])
+                if status == "delivered": order.delivered_at=timezone.now()
+                order.fulfillment_status=status; order.status="fulfilled" if status in {"dispatched","delivered"} else ("cancelled" if status=="cancelled" else order.status); order.save(update_fields=["fulfillment_status","status","dispatched_at","delivered_at"])
+                record_audit(request,"fulfillment status","sales order",order.id,f"{order.order_no} → {status}")
+            elif action == "payment":
+                invoice=getattr(order,"invoice",None)
+                if not invoice: raise ValueError("Issue the invoice before recording a payment")
+                amount=float(data.get("amount",0) or 0)
+                if amount <= 0: raise ValueError("Payment amount must be greater than zero")
+                paid=float(invoice.payments.aggregate(total=Sum("amount"))["total"] or 0)
+                if paid+amount > float(invoice.total): raise ValueError("Payment exceeds invoice balance")
+                Payment.objects.create(invoice=invoice,amount=amount,method=str(data.get("method","bank")),reference=str(data.get("reference","")).strip(),created_by=request.api_user)
+                total_paid=paid+amount; invoice.status="paid" if total_paid >= float(invoice.total) else "partial"; invoice.save(update_fields=["status"])
+                record_audit(request,"record payment","invoice",invoice.id,f"{invoice.invoice_no} / {amount}")
+            else: raise ValueError("Unknown fulfillment action")
     except Exception as exc:
         return JsonResponse({"detail":f"Could not update fulfillment: {exc}"},status=400)
     return JsonResponse({"item":sales_order_dict(order),"invoice":invoice_dict(getattr(order,"invoice",None)) if getattr(order,"invoice",None) else None})
