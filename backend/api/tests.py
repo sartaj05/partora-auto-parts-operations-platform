@@ -5,7 +5,7 @@ from django.test import TestCase
 from django.utils import timezone
 
 from .auth import issue_token
-from .models import AutomationRule, Customer, CustomerPortalToken, DemandHistory, FleetVehicle, GoodsReceipt, IntegrationConnection, Organization, OrganizationInvitation, OrganizationMembership, PortalAccessLog, Product, Profile, PurchaseOrder, PurchasePlan, QuotationItem, Quotation, RFQ, RFQOffer, SalesOrder, SalesOrderItem, StockLedgerEntry, StockReservation, SupportTicket, Supplier, SupplierContract, SupplierInvoice, VehicleFitment
+from .models import AutomationRule, Customer, CustomerPortalToken, DemandHistory, FleetVehicle, GoodsReceipt, IntegrationConnection, Organization, OrganizationInvitation, OrganizationMembership, PortalAccessLog, Product, Profile, PurchaseOrder, PurchaseOrderStatusEvent, PurchasePlan, QuotationItem, Quotation, RFQ, RFQOffer, SalesOrder, SalesOrderItem, StockLedgerEntry, StockReservation, SupportTicket, Supplier, SupplierContract, SupplierInvoice, VehicleFitment
 
 
 class DemandPlanningApiTests(TestCase):
@@ -395,3 +395,25 @@ class DemandPlanningApiTests(TestCase):
         self.assertEqual(imported.status_code, 201)
         self.assertEqual(imported.json()["summary"]["created"], 1)
         self.assertTrue(Product.objects.filter(sku="IMP-001", stock_qty=4).exists())
+
+    def test_purchase_order_reports_progress_and_status_history(self):
+        response = self.client.post(
+            "/api/purchase-orders/",
+            data={"supplier": self.supplier.name, "sku": self.product.sku, "quantity": 10, "unit_cost": 60, "status": "ordered"},
+            content_type="application/json",
+            **self.auth_headers(self.manager),
+        )
+        self.assertEqual(response.status_code, 201)
+        po_id = response.json()["item"]["id"]
+        self.assertEqual(PurchaseOrderStatusEvent.objects.filter(purchase_order_id=po_id).count(), 1)
+
+        receive = self.client.post(
+            "/api/purchase-orders/",
+            data={"action": "receive", "id": po_id},
+            content_type="application/json",
+            **self.auth_headers(self.store),
+        )
+        self.assertEqual(receive.status_code, 200)
+        item = self.client.get("/api/purchase-orders/", **self.auth_headers(self.manager)).json()["items"][0]
+        self.assertEqual(item["progress"], 100)
+        self.assertEqual(len(item["events"]), 2)

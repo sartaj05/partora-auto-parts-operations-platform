@@ -153,6 +153,17 @@ class PurchaseOrderItem(models.Model):
     received_qty = models.PositiveIntegerField(default=0)
 
 
+class PurchaseOrderStatusEvent(models.Model):
+    purchase_order = models.ForeignKey(PurchaseOrder, on_delete=models.CASCADE, related_name="status_events")
+    status = models.CharField(max_length=20, choices=PurchaseOrder.STATUS_CHOICES)
+    note = models.CharField(max_length=240, blank=True)
+    changed_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name="purchase_order_status_events")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+
 class GoodsReceipt(models.Model):
     STATUS_CHOICES = [("posted", "Posted"), ("cancelled", "Cancelled")]
     receipt_no = models.CharField(max_length=30, unique=True)

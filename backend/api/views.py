@@ -12,7 +12,7 @@ from django.http import JsonResponse
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 from .auth import api_login_required, get_current_organization, issue_token, roles_allowed
-from .models import Product, Quotation, QuotationItem, StockMovement, Supplier, SupplierContract, VehicleFitment, PurchaseOrder, PurchaseOrderItem, GoodsReceipt, GoodsReceiptLine, SupplierInvoice, Warehouse, WarehouseStock, StockTransfer, SalesOrder, SalesOrderItem, Invoice, Payment, ReturnRequest, InventoryCount, InventoryCountLine, ProductLot, SupplierPriceSnapshot, Customer, CustomerPortalToken, PortalAccessLog, PriceRule, Notification, ApprovalRequest, AuditLog, DemandHistory, PurchasePlan, RFQ, RFQOffer, IntegrationConnection, WebhookSubscription, IntegrationLog, PwaDevice, SyncConflict, AutomationRule, AutomationRun, FleetVehicle, FleetWorkOrder, SupportTicket, SupportCommunication, DeliveryRoute, Shipment, Organization, OrganizationMembership, OrganizationInvitation, StockLedgerEntry, StockReservation
+from .models import Product, Quotation, QuotationItem, StockMovement, Supplier, SupplierContract, VehicleFitment, PurchaseOrder, PurchaseOrderItem, PurchaseOrderStatusEvent, GoodsReceipt, GoodsReceiptLine, SupplierInvoice, Warehouse, WarehouseStock, StockTransfer, SalesOrder, SalesOrderItem, Invoice, Payment, ReturnRequest, InventoryCount, InventoryCountLine, ProductLot, SupplierPriceSnapshot, Customer, CustomerPortalToken, PortalAccessLog, PriceRule, Notification, ApprovalRequest, AuditLog, DemandHistory, PurchasePlan, RFQ, RFQOffer, IntegrationConnection, WebhookSubscription, IntegrationLog, PwaDevice, SyncConflict, AutomationRule, AutomationRun, FleetVehicle, FleetWorkOrder, SupportTicket, SupportCommunication, DeliveryRoute, Shipment, Organization, OrganizationMembership, OrganizationInvitation, StockLedgerEntry, StockReservation
 from .serializers import product_dict, quotation_dict, supplier_dict
 
 ROLE_MODULES = {
@@ -313,10 +313,11 @@ def fitments_view(request):
 @roles_allowed("admin", "manager", "store")
 def purchase_orders_view(request):
     if request.method == "GET":
-        qs = PurchaseOrder.objects.select_related("supplier", "created_by").prefetch_related("items__product").order_by("-created_at")
+        qs = PurchaseOrder.objects.select_related("supplier", "created_by").prefetch_related("items__product", "status_events__changed_by").order_by("-created_at")
         items=[]
         for po in qs[:100]:
-            items.append({"id":po.id,"po_no":po.po_no,"supplier":po.supplier.name,"status":po.status,"expected_date":po.expected_date.isoformat() if po.expected_date else None,"total":float(po.total),"created_by":(po.created_by.get_full_name() or po.created_by.username) if po.created_by else "System","line_count":po.items.count(),"received_lines":sum(1 for i in po.items.all() if i.received_qty >= i.quantity)})
+            ordered_qty=sum(i.quantity for i in po.items.all()); received_qty=sum(i.received_qty for i in po.items.all())
+            items.append({"id":po.id,"po_no":po.po_no,"supplier":po.supplier.name,"supplier_rating":float(po.supplier.rating),"lead_time_days":po.supplier.lead_time_days,"status":po.status,"expected_date":po.expected_date.isoformat() if po.expected_date else None,"total":float(po.total),"created_by":(po.created_by.get_full_name() or po.created_by.username) if po.created_by else "System","line_count":po.items.count(),"ordered_qty":ordered_qty,"received_qty":received_qty,"received_lines":sum(1 for i in po.items.all() if i.received_qty >= i.quantity),"progress":round(received_qty / ordered_qty * 100) if ordered_qty else 0,"events":[{"status":event.status,"note":event.note,"changed_by":(event.changed_by.get_full_name() or event.changed_by.username) if event.changed_by else "System","created_at":event.created_at.isoformat()} for event in po.status_events.all()]})
         return JsonResponse({"items":items,"count":qs.count()})
     if request.method == "POST":
         data=parse_body(request) or {}
@@ -331,6 +332,7 @@ def purchase_orders_view(request):
                         line.product.stock_qty += remaining; line.product.save(update_fields=["stock_qty","updated_at"])
                         StockMovement.objects.create(product=line.product,movement_type="in",quantity=remaining,reference=po.po_no)
                 po.status="received"; po.received_at=timezone.now(); po.save(update_fields=["status","received_at"])
+                PurchaseOrderStatusEvent.objects.create(purchase_order=po,status=po.status,note="All open quantities received",changed_by=request.api_user)
             except Exception as exc:
                 return JsonResponse({"detail":f"Could not receive purchase order: {exc}"},status=400)
             return JsonResponse({"item":{"id":po.id,"po_no":po.po_no,"supplier":po.supplier.name,"status":po.status,"expected_date":po.expected_date.isoformat() if po.expected_date else None,"total":float(po.total),"line_count":po.items.count(),"received_lines":po.items.count()}})
@@ -341,10 +343,11 @@ def purchase_orders_view(request):
             qty=max(1,int(data.get("quantity",1))); unit_cost=float(data.get("unit_cost") or product.price)
             po=PurchaseOrder.objects.create(po_no=f"PO-{timezone.now():%y%m%d}-{uuid4().hex[:4].upper()}",supplier=supplier,status=str(data.get("status","draft")),expected_date=expected,total=qty*unit_cost,created_by=request.api_user)
             PurchaseOrderItem.objects.create(purchase_order=po,product=product,quantity=qty,unit_cost=unit_cost)
+            PurchaseOrderStatusEvent.objects.create(purchase_order=po,status=po.status,note="Purchase order created",changed_by=request.api_user)
             SupplierPriceSnapshot.objects.create(supplier=supplier,product=product,unit_cost=unit_cost,source_po=po)
         except Exception as exc:
             return JsonResponse({"detail":f"Could not create purchase order: {exc}"},status=400)
-        return JsonResponse({"item":{"id":po.id,"po_no":po.po_no,"supplier":po.supplier.name,"status":po.status,"expected_date":po.expected_date.isoformat() if po.expected_date else None,"total":float(po.total),"created_by":request.api_user.get_full_name() or request.api_user.username,"line_count":1,"received_lines":0}},status=201)
+        return JsonResponse({"item":{"id":po.id,"po_no":po.po_no,"supplier":po.supplier.name,"supplier_rating":float(po.supplier.rating),"lead_time_days":po.supplier.lead_time_days,"status":po.status,"expected_date":po.expected_date.isoformat() if po.expected_date else None,"total":float(po.total),"created_by":request.api_user.get_full_name() or request.api_user.username,"line_count":1,"ordered_qty":qty,"received_qty":0,"received_lines":0,"progress":0,"events":[{"status":po.status,"note":"Purchase order created","changed_by":request.api_user.get_full_name() or request.api_user.username}]}},status=201)
     return JsonResponse({"detail":"Method not allowed"},status=405)
 
 def receiving_po_dict(po):
@@ -390,6 +393,7 @@ def receiving_view(request):
                 if not posted: raise ValueError("Enter an accepted or damaged quantity")
                 complete=all(line.received_qty>=line.quantity for line in po.items.all())
                 po.status="received" if complete else "partial"; po.received_at=timezone.now(); po.save(update_fields=["status","received_at"])
+                PurchaseOrderStatusEvent.objects.create(purchase_order=po,status=po.status,note=f"Goods receipt {receipt.receipt_no} posted",changed_by=request.api_user)
             record_audit(request,"post goods receipt","goods receipt",receipt.id,receipt.receipt_no)
             return JsonResponse({"item":receiving_po_dict(po)},status=201)
         if action == "invoice":
