@@ -445,3 +445,166 @@ class RFQOffer(models.Model):
     class Meta:
         ordering = ["unit_price", "lead_time_days"]
         unique_together = [("rfq", "supplier")]
+
+
+# Persistent enterprise operations models. These replace the hard-coded demo
+# responses used by the enterprise workspace while keeping the response shape
+# consumed by the existing React screens.
+class IntegrationConnection(models.Model):
+    TYPE_CHOICES = [("accounting", "Accounting"), ("messaging", "Messaging"), ("shipping", "Shipping"), ("payments", "Payments"), ("webhook", "Webhook")]
+    STATUS_CHOICES = [("connected", "Connected"), ("attention", "Needs attention"), ("available", "Available"), ("disabled", "Disabled")]
+    name = models.CharField(max_length=120)
+    integration_type = models.CharField(max_length=20, choices=TYPE_CHOICES, default="webhook")
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="available")
+    last_sync = models.DateTimeField(null=True, blank=True)
+    records = models.PositiveIntegerField(default=0)
+    created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name="integration_connections")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+
+class WebhookSubscription(models.Model):
+    STATUS_CHOICES = [("active", "Active"), ("paused", "Paused"), ("failed", "Failed")]
+    connection = models.ForeignKey(IntegrationConnection, on_delete=models.CASCADE, null=True, blank=True, related_name="webhooks")
+    event = models.CharField(max_length=100)
+    target = models.URLField(max_length=300)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="active")
+    deliveries = models.PositiveIntegerField(default=0)
+    created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name="webhook_subscriptions")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+
+class IntegrationLog(models.Model):
+    connection = models.ForeignKey(IntegrationConnection, on_delete=models.SET_NULL, null=True, blank=True, related_name="logs")
+    event = models.CharField(max_length=120)
+    target = models.CharField(max_length=300, blank=True)
+    status = models.CharField(max_length=20, default="delivered")
+    detail = models.CharField(max_length=300, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+
+class PwaDevice(models.Model):
+    STATUS_CHOICES = [("online", "Online"), ("offline", "Offline"), ("blocked", "Blocked")]
+    name = models.CharField(max_length=140)
+    warehouse = models.ForeignKey(Warehouse, on_delete=models.SET_NULL, null=True, blank=True, related_name="pwa_devices")
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="offline")
+    app_version = models.CharField(max_length=30, blank=True)
+    last_seen = models.DateTimeField(null=True, blank=True)
+    active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+
+class SyncConflict(models.Model):
+    STATUS_CHOICES = [("needs_review", "Needs review"), ("resolved", "Resolved")]
+    device = models.ForeignKey(PwaDevice, on_delete=models.CASCADE, related_name="conflicts")
+    reference = models.CharField(max_length=80)
+    field = models.CharField(max_length=80)
+    local_value = models.CharField(max_length=240)
+    server_value = models.CharField(max_length=240)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="needs_review")
+    resolved_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name="resolved_sync_conflicts")
+    resolved_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+
+class AutomationRule(models.Model):
+    STATUS_CHOICES = [("active", "Active"), ("paused", "Paused")]
+    name = models.CharField(max_length=140)
+    trigger = models.CharField(max_length=120)
+    action = models.CharField(max_length=160)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="active")
+    runs = models.PositiveIntegerField(default=0)
+    last_run = models.DateTimeField(null=True, blank=True)
+    created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name="automation_rules")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+
+class AutomationRun(models.Model):
+    rule = models.ForeignKey(AutomationRule, on_delete=models.CASCADE, related_name="run_history")
+    result = models.CharField(max_length=20, default="success")
+    detail = models.CharField(max_length=300, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+
+class FleetVehicle(models.Model):
+    STATUS_CHOICES = [("healthy", "Healthy"), ("due_soon", "Due soon"), ("overdue", "Overdue")]
+    registration = models.CharField(max_length=30, unique=True)
+    customer = models.CharField(max_length=140)
+    make = models.CharField(max_length=80)
+    model = models.CharField(max_length=80)
+    year = models.PositiveIntegerField(default=2022)
+    mileage = models.PositiveIntegerField(default=0)
+    next_service = models.DateField()
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="healthy")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+
+class FleetWorkOrder(models.Model):
+    STATUS_CHOICES = [("scheduled", "Scheduled"), ("in_progress", "In progress"), ("completed", "Completed"), ("cancelled", "Cancelled")]
+    order_no = models.CharField(max_length=40, unique=True)
+    vehicle = models.ForeignKey(FleetVehicle, on_delete=models.SET_NULL, null=True, blank=True, related_name="work_orders")
+    registration = models.CharField(max_length=30)
+    customer = models.CharField(max_length=140)
+    technician = models.CharField(max_length=120, blank=True)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="scheduled")
+    due_date = models.DateField()
+    parts_value = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    labor_value = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    notes = models.CharField(max_length=300, blank=True)
+    created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name="fleet_work_orders")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+
+class SupportTicket(models.Model):
+    STATUS_CHOICES = [("open", "Open"), ("in_progress", "In progress"), ("pending_customer", "Pending customer"), ("escalated", "Escalated"), ("resolved", "Resolved")]
+    PRIORITY_CHOICES = [("normal", "Normal"), ("high", "High"), ("urgent", "Urgent")]
+    ticket_no = models.CharField(max_length=40, unique=True)
+    customer = models.CharField(max_length=140)
+    subject = models.CharField(max_length=200)
+    channel = models.CharField(max_length=40, default="portal")
+    priority = models.CharField(max_length=20, choices=PRIORITY_CHOICES, default="normal")
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="open")
+    assignee = models.CharField(max_length=120, blank=True)
+    sla_due = models.DateTimeField(null=True, blank=True)
+    last_message = models.CharField(max_length=300, blank=True)
+    messages = models.PositiveIntegerField(default=1)
+    created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name="support_tickets")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+
+class SupportCommunication(models.Model):
+    ticket = models.ForeignKey(SupportTicket, on_delete=models.CASCADE, related_name="communications")
+    actor = models.CharField(max_length=120)
+    channel = models.CharField(max_length=40)
+    message = models.CharField(max_length=500)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+
+class DeliveryRoute(models.Model):
+    STATUS_CHOICES = [("planned", "Planned"), ("in_transit", "In transit"), ("delivered", "Delivered"), ("cancelled", "Cancelled")]
+    route_no = models.CharField(max_length=40, unique=True)
+    driver = models.CharField(max_length=120)
+    vehicle = models.CharField(max_length=80)
+    stops = models.PositiveIntegerField(default=1)
+    completed = models.PositiveIntegerField(default=0)
+    eta = models.CharField(max_length=40, blank=True)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="planned")
+    cost = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name="delivery_routes")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+
+class Shipment(models.Model):
+    STATUS_CHOICES = [("planned", "Planned"), ("in_transit", "In transit"), ("delivered", "Delivered"), ("exception", "Exception")]
+    POD_CHOICES = [("pending", "Pending"), ("verified", "Verified")]
+    shipment_no = models.CharField(max_length=40, unique=True)
+    route = models.ForeignKey(DeliveryRoute, on_delete=models.SET_NULL, null=True, blank=True, related_name="shipments")
+    customer = models.CharField(max_length=140)
+    order_no = models.CharField(max_length=40, blank=True)
+    driver = models.CharField(max_length=120, blank=True)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="planned")
+    eta = models.DateTimeField(null=True, blank=True)
+    pod_status = models.CharField(max_length=20, choices=POD_CHOICES, default="pending")
+    value = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    proof_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)

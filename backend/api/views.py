@@ -1,16 +1,16 @@
 import json
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from math import ceil
 from uuid import uuid4
 from django.contrib.auth import authenticate
 from django.db import transaction
-from django.db.models import Count, DecimalField, ExpressionWrapper, F, Q, Sum
+from django.db.models import Count, DecimalField, ExpressionWrapper, F, Max, Q, Sum
 from django.http import JsonResponse
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 from .auth import api_login_required, issue_token, roles_allowed
-from .models import Product, Quotation, StockMovement, Supplier, SupplierContract, VehicleFitment, PurchaseOrder, PurchaseOrderItem, GoodsReceipt, GoodsReceiptLine, SupplierInvoice, Warehouse, WarehouseStock, StockTransfer, SalesOrder, SalesOrderItem, Invoice, Payment, ReturnRequest, InventoryCount, InventoryCountLine, ProductLot, SupplierPriceSnapshot, Customer, CustomerPortalToken, PriceRule, Notification, ApprovalRequest, AuditLog, DemandHistory, PurchasePlan, RFQ, RFQOffer
+from .models import Product, Quotation, StockMovement, Supplier, SupplierContract, VehicleFitment, PurchaseOrder, PurchaseOrderItem, GoodsReceipt, GoodsReceiptLine, SupplierInvoice, Warehouse, WarehouseStock, StockTransfer, SalesOrder, SalesOrderItem, Invoice, Payment, ReturnRequest, InventoryCount, InventoryCountLine, ProductLot, SupplierPriceSnapshot, Customer, CustomerPortalToken, PriceRule, Notification, ApprovalRequest, AuditLog, DemandHistory, PurchasePlan, RFQ, RFQOffer, IntegrationConnection, WebhookSubscription, IntegrationLog, PwaDevice, SyncConflict, AutomationRule, AutomationRun, FleetVehicle, FleetWorkOrder, SupportTicket, SupportCommunication, DeliveryRoute, Shipment
 from .serializers import product_dict, quotation_dict, supplier_dict
 
 ROLE_MODULES = {
@@ -459,21 +459,48 @@ def warranty_view(request):
 @roles_allowed("admin", "manager", "store")
 def integrations_view(request):
     if request.method == "GET":
-        connections=[{"id":1,"name":"Zoho Books","type":"accounting","status":"connected","last_sync":timezone.now().isoformat(),"records":184},{"id":2,"name":"WhatsApp Business","type":"messaging","status":"connected","last_sync":timezone.now().isoformat(),"records":42},{"id":3,"name":"Shiprocket","type":"shipping","status":"attention","last_sync":(timezone.now()-timedelta(hours=1)).isoformat(),"records":18},{"id":4,"name":"Razorpay","type":"payments","status":"available","last_sync":None,"records":0}]
-        logs=[{"id":a.id,"event":a.action,"target":"Partora webhook","status":"delivered","created_at":a.created_at.isoformat()} for a in AuditLog.objects.filter(action__icontains="integration").order_by("-created_at")[:20]]
-        return JsonResponse({"connections":connections,"webhooks":[{"id":1,"event":"invoice.paid","target":"https://client.example/webhooks/partora","status":"active","deliveries":42}],"logs":logs})
+        connections=[{"id":x.id,"name":x.name,"type":x.integration_type,"status":x.status,"last_sync":x.last_sync.isoformat() if x.last_sync else None,"records":x.records} for x in IntegrationConnection.objects.order_by("name")]
+        webhooks=[{"id":x.id,"event":x.event,"target":x.target,"status":x.status,"deliveries":x.deliveries} for x in WebhookSubscription.objects.order_by("-created_at")[:50]]
+        logs=[{"id":x.id,"event":x.event,"target":x.target,"status":x.status,"created_at":x.created_at.isoformat()} for x in IntegrationLog.objects.order_by("-created_at")[:50]]
+        return JsonResponse({"connections":connections,"webhooks":webhooks,"logs":logs})
     data=parse_body(request) or {}; action=str(data.get("action","connect"))
-    item={"id":uuid4().hex[:8],"name":str(data.get("name","New connector")),"type":str(data.get("type","webhook")),"status":"connected","last_sync":timezone.now().isoformat(),"records":0}
-    if action == "webhook": item={"id":uuid4().hex[:8],"event":str(data.get("event","invoice.paid")),"target":str(data.get("target","https://client.example/webhooks/partora")),"status":"active","deliveries":0}
-    record_audit(request,"integration setup","integration",item["id"],item.get("name",item.get("event","webhook")))
-    return JsonResponse({"item":item},status=201)
+    try:
+        if action == "webhook":
+            item=WebhookSubscription.objects.create(event=str(data.get("event","invoice.paid")),target=str(data.get("target","https://client.example/webhooks/partora")),created_by=request.api_user)
+            payload={"id":item.id,"event":item.event,"target":item.target,"status":item.status,"deliveries":item.deliveries}
+            IntegrationLog.objects.create(event="webhook.created",target=item.target,detail=item.event)
+        else:
+            item=IntegrationConnection.objects.create(name=str(data.get("name","New connector")),integration_type=str(data.get("type","webhook")),status="connected",last_sync=timezone.now(),created_by=request.api_user)
+            payload={"id":item.id,"name":item.name,"type":item.integration_type,"status":item.status,"last_sync":item.last_sync.isoformat(),"records":item.records}
+            IntegrationLog.objects.create(connection=item,event="integration.connected",target=item.name,detail=item.integration_type)
+    except Exception as exc:
+        return JsonResponse({"detail":f"Could not configure integration: {exc}"},status=400)
+    record_audit(request,"integration setup","integration",payload["id"],payload.get("name",payload.get("event","webhook")))
+    return JsonResponse({"item":payload},status=201)
 
 @csrf_exempt
 @roles_allowed("admin", "manager", "store")
 def pwa_admin_view(request):
     if request.method == "GET":
-        return JsonResponse({"devices":[{"id":1,"name":"Kabir Store · Android","warehouse":"DEL-MAIN","status":"online","app_version":"1.4.0","last_seen":timezone.now().isoformat()},{"id":2,"name":"Receiving Tablet · iPad","warehouse":"GUR-SAT","status":"offline","app_version":"1.3.8","last_seen":(timezone.now()-timedelta(hours=1)).isoformat()}],"sync":{"queued":3,"synced_today":126,"conflicts":1,"last_sync":timezone.now().isoformat()},"conflicts":[{"id":1,"reference":"CNT-260923-1A90","field":"counted_qty","local_value":3,"server_value":4,"status":"needs_review"}]})
-    data=parse_body(request) or {}; action=str(data.get("action","sync")); item={"id":data.get("id"),"status":"resolved" if action=="resolve" else "synced","last_sync":timezone.now().isoformat()}; record_audit(request,"pwa sync action","device",item["id"] or "queue",action); return JsonResponse({"item":item})
+        devices=[{"id":x.id,"name":x.name,"warehouse":x.warehouse.code if x.warehouse else "Unassigned","status":x.status,"app_version":x.app_version,"last_seen":x.last_seen.isoformat() if x.last_seen else None} for x in PwaDevice.objects.select_related("warehouse").filter(active=True).order_by("name")]
+        conflicts=[{"id":x.id,"reference":x.reference,"field":x.field,"local_value":x.local_value,"server_value":x.server_value,"status":x.status} for x in SyncConflict.objects.filter(status="needs_review").order_by("-created_at")[:100]]
+        sync_logs=AuditLog.objects.filter(action="pwa sync action",created_at__date=timezone.localdate())
+        last_sync=PwaDevice.objects.aggregate(last=Max("last_seen"))["last"]
+        return JsonResponse({"devices":devices,"sync":{"queued":0,"synced_today":sync_logs.count(),"conflicts":len(conflicts),"last_sync":last_sync.isoformat() if last_sync else None},"conflicts":conflicts})
+    data=parse_body(request) or {}; action=str(data.get("action","sync"))
+    if action == "resolve":
+        try:
+            conflict=SyncConflict.objects.get(id=int(data["id"]))
+            conflict.status="resolved"; conflict.resolved_by=request.api_user; conflict.resolved_at=timezone.now(); conflict.save(update_fields=["status","resolved_by","resolved_at"])
+            item={"id":conflict.id,"status":conflict.status}
+        except Exception as exc:
+            return JsonResponse({"detail":f"Could not resolve sync conflict: {exc}"},status=400)
+    else:
+        now=timezone.now(); PwaDevice.objects.filter(active=True).update(status="online",last_seen=now)
+        record_audit(request,"pwa sync action","device","queue","sync")
+        item={"id":None,"status":"synced","last_sync":now.isoformat(),"synced":True}
+    record_audit(request,"pwa sync action","device",item.get("id") or "queue",action)
+    return JsonResponse({"item":item})
 
 @csrf_exempt
 @roles_allowed("admin", "manager", "store")
@@ -493,15 +520,61 @@ def tenancy_view(request):
 @roles_allowed("admin", "manager", "store")
 def automation_view(request):
     if request.method == "GET":
-        return JsonResponse({"rules":[{"id":1,"name":"Low-stock manager alert","trigger":"stock.below_reorder","action":"Send notification","status":"active","runs":18,"last_run":timezone.now().isoformat()},{"id":2,"name":"Block invoice mismatch","trigger":"invoice.exception","action":"Create approval","status":"active","runs":4,"last_run":timezone.now().isoformat()},{"id":3,"name":"Contract renewal reminder","trigger":"contract.expiring_30d","action":"Create review task","status":"paused","runs":2,"last_run":(timezone.now()-timedelta(days=3)).isoformat()}],"runs":[]})
-    data=parse_body(request) or {}; item={"id":uuid4().hex[:8],"name":str(data.get("name","New automation rule")),"trigger":str(data.get("trigger","stock.below_reorder")),"action":str(data.get("rule_action","Send notification")),"status":"active","runs":0,"last_run":None}; record_audit(request,"automation rule","rule",item["id"],item["name"]); return JsonResponse({"item":item},status=201)
+        rules=[{"id":x.id,"name":x.name,"trigger":x.trigger,"action":x.action,"status":x.status,"runs":x.runs,"last_run":x.last_run.isoformat() if x.last_run else None} for x in AutomationRule.objects.order_by("name")]
+        runs=[{"id":x.id,"rule":x.rule.name,"result":x.result,"detail":x.detail,"created_at":x.created_at.isoformat()} for x in AutomationRun.objects.select_related("rule").order_by("-created_at")[:100]]
+        return JsonResponse({"rules":rules,"runs":runs})
+    data=parse_body(request) or {}; action=str(data.get("action","rule"))
+    try:
+        if action == "rule":
+            rule=AutomationRule.objects.create(name=str(data.get("name","New automation rule")),trigger=str(data.get("trigger","stock.below_reorder")),action=str(data.get("rule_action","Send notification")),created_by=request.api_user)
+        else:
+            rule=AutomationRule.objects.get(id=int(data["id"]))
+            if action == "toggle":
+                rule.status="paused" if rule.status == "active" else "active"
+            elif action == "run":
+                if rule.status != "active": raise ValueError("Paused rules cannot be run")
+                rule.runs += 1; rule.last_run=timezone.now(); AutomationRun.objects.create(rule=rule,result="success",detail="Action completed")
+            else: raise ValueError("Unknown automation action")
+            rule.save(update_fields=["status","runs","last_run"])
+        item={"id":rule.id,"name":rule.name,"trigger":rule.trigger,"action":rule.action,"status":rule.status,"runs":rule.runs,"last_run":rule.last_run.isoformat() if rule.last_run else None}
+    except Exception as exc:
+        return JsonResponse({"detail":f"Could not update automation rule: {exc}"},status=400)
+    record_audit(request,"automation rule","rule",rule.id,action)
+    return JsonResponse({"item":item},status=201 if action=="rule" else 200)
 
 @csrf_exempt
 @roles_allowed("admin", "manager", "sales", "store")
 def fleet_view(request):
+    def vehicle_item(vehicle):
+        return {"id":vehicle.id,"registration":vehicle.registration,"customer":vehicle.customer,"make":vehicle.make,"model":vehicle.model,"year":vehicle.year,"mileage":vehicle.mileage,"next_service":vehicle.next_service.isoformat(),"status":vehicle.status}
+    def work_order_item(order):
+        return {"id":order.id,"order_no":order.order_no,"registration":order.registration,"customer":order.customer,"technician":order.technician,"status":order.status,"due_date":order.due_date.isoformat(),"parts_value":float(order.parts_value),"labor_value":float(order.labor_value),"notes":order.notes}
     if request.method == "GET":
-        return JsonResponse({"vehicles":[{"id":1,"registration":"DL 01 AB 2488","customer":"Rapid Fleet Care","make":"Tata","model":"Ace Gold","year":2022,"mileage":68240,"next_service":"2026-10-04","status":"due_soon"},{"id":2,"registration":"HR 26 CX 9012","customer":"Northline Repairs","make":"Hyundai","model":"i20","year":2023,"mileage":42110,"next_service":"2026-11-18","status":"healthy"},{"id":3,"registration":"DL 04 MK 7761","customer":"Metro Garage","make":"Maruti Suzuki","model":"Swift","year":2020,"mileage":88700,"next_service":"2026-09-28","status":"overdue"}],"work_orders":[{"id":1,"order_no":"WO-260923-018","registration":"DL 01 AB 2488","customer":"Rapid Fleet Care","technician":"Ravi Kumar","status":"scheduled","due_date":"2026-10-04","parts_value":4850,"labor_value":1800,"notes":"Replace brake pads and oil filter"},{"id":2,"order_no":"WO-260921-014","registration":"DL 04 MK 7761","customer":"Metro Garage","technician":"Sana Iqbal","status":"in_progress","due_date":"2026-09-28","parts_value":7200,"labor_value":2200,"notes":"Full service and headlamp diagnosis"}],"reminders":[{"id":1,"type":"service_due","title":"Service due in 11 days","detail":"DL 01 AB 2488 · Rapid Fleet Care","status":"queued"},{"id":2,"type":"overdue","title":"Service overdue","detail":"DL 04 MK 7761 · Metro Garage","status":"urgent"}]})
-    data=parse_body(request) or {}; action=str(data.get("action","work_order")); item={"id":uuid4().hex[:8],"order_no":f"WO-{timezone.now():%y%m%d}-{uuid4().hex[:3].upper()}","registration":data.get("registration"),"customer":data.get("customer"),"technician":data.get("technician"),"status":"scheduled","due_date":data.get("due_date"),"parts_value":float(data.get("parts_value",0) or 0),"labor_value":float(data.get("labor_value",0) or 0),"notes":data.get("notes","")}; record_audit(request,"fleet work order","fleet",item["id"],action); return JsonResponse({"item":item},status=201)
+        today=timezone.localdate(); vehicles=list(FleetVehicle.objects.order_by("next_service")); orders=FleetWorkOrder.objects.order_by("due_date")[:100]
+        reminders=[]
+        for vehicle in vehicles:
+            days=(vehicle.next_service-today).days
+            if vehicle.status == "overdue": reminders.append({"id":vehicle.id,"type":"overdue","title":"Service overdue","detail":f"{vehicle.registration} · {vehicle.customer}","status":"urgent"})
+            elif days <= 30: reminders.append({"id":vehicle.id,"type":"service_due","title":f"Service due in {max(days, 0)} days","detail":f"{vehicle.registration} · {vehicle.customer}","status":"queued"})
+        return JsonResponse({"vehicles":[vehicle_item(x) for x in vehicles],"work_orders":[work_order_item(x) for x in orders],"reminders":reminders})
+    data=parse_body(request) or {}; action=str(data.get("action","work_order"))
+    try:
+        if action == "vehicle":
+            next_service=date.fromisoformat(str(data["next_service"])); today=timezone.localdate(); days=(next_service-today).days
+            status="overdue" if days < 0 else "due_soon" if days <= 30 else "healthy"
+            vehicle=FleetVehicle.objects.create(registration=str(data["registration"]).strip().upper(),customer=str(data["customer"]).strip(),make=str(data["make"]).strip(),model=str(data["model"]).strip(),year=int(data.get("year",2022) or 2022),mileage=max(0,int(data.get("mileage",0) or 0)),next_service=next_service,status=status)
+            item=vehicle_item(vehicle)
+        elif action == "work_order":
+            vehicle=FleetVehicle.objects.filter(registration=str(data.get("registration","")).strip().upper()).first()
+            order=FleetWorkOrder.objects.create(order_no=f"WO-{timezone.now():%y%m%d}-{uuid4().hex[:4].upper()}",vehicle=vehicle,registration=str(data["registration"]).strip().upper(),customer=str(data["customer"]).strip(),technician=str(data.get("technician","")).strip(),due_date=date.fromisoformat(str(data["due_date"])),parts_value=float(data.get("parts_value",0) or 0),labor_value=float(data.get("labor_value",0) or 0),notes=str(data.get("notes","")).strip(),created_by=request.api_user)
+            item=work_order_item(order)
+        elif action == "status":
+            order=FleetWorkOrder.objects.get(id=int(data["id"])); order.status=str(data.get("status",order.status)); order.save(update_fields=["status"]); item=work_order_item(order)
+        else: raise ValueError("Unknown fleet action")
+    except Exception as exc:
+        return JsonResponse({"detail":f"Could not update fleet data: {exc}"},status=400)
+    record_audit(request,"fleet action","fleet",item["id"],action)
+    return JsonResponse({"item":item},status=201 if action in {"vehicle","work_order"} else 200)
 
 @csrf_exempt
 @roles_allowed("admin", "manager", "store")
@@ -532,11 +605,32 @@ def saas_billing_view(request):
 @csrf_exempt
 @roles_allowed("admin", "manager", "store")
 def customer_service_view(request):
-    tickets=[{"id":1,"ticket_no":"CS-260923-104","customer":"Northline Repairs","subject":"Brake pad fitment question","channel":"dealer_portal","priority":"high","status":"open","assignee":"Meera Manager","sla_due":"2026-09-23 15:30","last_message":"Customer shared vehicle registration and installation photos.","messages":3},{"id":2,"ticket_no":"CS-260923-101","customer":"Rapid Fleet Care","subject":"Shipment arrived with missing relay","channel":"whatsapp","priority":"urgent","status":"escalated","assignee":"Rohan Sales","sla_due":"2026-09-23 13:00","last_message":"Dispatch exception needs replacement approval.","messages":5},{"id":3,"ticket_no":"CS-260922-098","customer":"Metro Garage","subject":"Request repeat quotation","channel":"email","priority":"normal","status":"pending_customer","assignee":"Kabir Store","sla_due":"2026-09-24 10:00","last_message":"Quote sent for confirmation.","messages":2}]
-    if request.method == "GET": return JsonResponse({"summary":{"open_tickets":8,"overdue_sla":2,"avg_response_hours":1.8,"csat":94},"tickets":tickets,"communications":[{"id":1,"ticket_no":"CS-260923-104","actor":"Meera Manager","channel":"email","message":"Requested VIN and installation photos.","created_at":timezone.now().isoformat()},{"id":2,"ticket_no":"CS-260923-101","actor":"Rohan Sales","channel":"whatsapp","message":"Escalated missing-item claim to dispatch.","created_at":(timezone.now()-timedelta(minutes=20)).isoformat()}]})
-    data=parse_body(request) or {}; action=str(data.get("action","ticket")); item={"id":uuid4().hex[:8],"ticket_no":f"CS-{timezone.now():%y%m%d}-{uuid4().hex[:3].upper()}","customer":str(data.get("customer","New customer")),"subject":str(data.get("subject","New support request")),"channel":str(data.get("channel","portal")),"priority":str(data.get("priority","normal")),"status":"open","assignee":str(data.get("assignee","Unassigned")),"sla_due":str(data.get("sla_due","2026-09-24 12:00")),"last_message":str(data.get("message","Ticket created from the operations desk.")),"messages":1}
-    if action in {"status","assign","message"}: item={"id":data.get("id"),"status":str(data.get("status","open")),"assignee":str(data.get("assignee","Unassigned")),"last_message":str(data.get("message","Support update recorded.")),"messages":2}
-    record_audit(request,"customer service action","ticket",item["id"],action); return JsonResponse({"item":item},status=201 if action=="ticket" else 200)
+    def ticket_item(ticket):
+        return {"id":ticket.id,"ticket_no":ticket.ticket_no,"customer":ticket.customer,"subject":ticket.subject,"channel":ticket.channel,"priority":ticket.priority,"status":ticket.status,"assignee":ticket.assignee or "Unassigned","sla_due":ticket.sla_due.strftime("%Y-%m-%d %H:%M") if ticket.sla_due else None,"last_message":ticket.last_message,"messages":ticket.messages}
+    if request.method == "GET":
+        tickets=list(SupportTicket.objects.order_by("-updated_at")[:100]); now=timezone.now()
+        overdue=sum(1 for x in tickets if x.sla_due and x.sla_due < now and x.status != "resolved")
+        communications=[{"id":x.id,"ticket_no":x.ticket.ticket_no,"actor":x.actor,"channel":x.channel,"message":x.message,"created_at":x.created_at.isoformat()} for x in SupportCommunication.objects.select_related("ticket").order_by("-created_at")[:50]]
+        return JsonResponse({"summary":{"open_tickets":sum(1 for x in tickets if x.status != "resolved"),"overdue_sla":overdue,"avg_response_hours":0,"csat":0},"tickets":[ticket_item(x) for x in tickets],"communications":communications})
+    data=parse_body(request) or {}; action=str(data.get("action","ticket"))
+    try:
+        if action == "ticket":
+            raw_sla=str(data.get("sla_due","")).strip(); sla=timezone.make_aware(datetime.fromisoformat(raw_sla.replace(" ","T"))) if raw_sla else None
+            ticket=SupportTicket.objects.create(ticket_no=f"CS-{timezone.now():%y%m%d}-{uuid4().hex[:4].upper()}",customer=str(data.get("customer","New customer")),subject=str(data.get("subject","New support request")),channel=str(data.get("channel","portal")),priority=str(data.get("priority","normal")),assignee=str(data.get("assignee","")),sla_due=sla,last_message=str(data.get("message","Ticket created from the operations desk.")),created_by=request.api_user)
+            SupportCommunication.objects.create(ticket=ticket,actor=request.api_user.get_full_name() or request.api_user.username,channel=ticket.channel,message=ticket.last_message)
+        else:
+            ticket=SupportTicket.objects.get(id=int(data["id"]))
+            if action == "status": ticket.status=str(data.get("status",ticket.status))
+            elif action == "assign": ticket.assignee=str(data.get("assignee",ticket.assignee))
+            elif action == "message":
+                message=str(data.get("message","Support update recorded.")); ticket.last_message=message; ticket.messages += 1; SupportCommunication.objects.create(ticket=ticket,actor=request.api_user.get_full_name() or request.api_user.username,channel=str(data.get("channel",ticket.channel)),message=message)
+            else: raise ValueError("Unknown customer service action")
+            ticket.save(update_fields=["status","assignee","last_message","messages","updated_at"])
+        item=ticket_item(ticket)
+    except Exception as exc:
+        return JsonResponse({"detail":f"Could not update support ticket: {exc}"},status=400)
+    record_audit(request,"customer service action","ticket",ticket.id,action)
+    return JsonResponse({"item":item},status=201 if action=="ticket" else 200)
 
 @csrf_exempt
 @roles_allowed("admin", "manager", "store")
@@ -565,12 +659,28 @@ def documents_view(request):
 @csrf_exempt
 @roles_allowed("admin", "manager", "sales", "store")
 def delivery_view(request):
-    routes=[{"id":1,"route_no":"RT-260923-04","driver":"Sanjay Mehta","vehicle":"DL 01 AB 2488","stops":6,"completed":3,"eta":"14:30","status":"in_transit","cost":1850},{"id":2,"route_no":"RT-260923-03","driver":"Pooja Shah","vehicle":"HR 26 CX 9012","stops":4,"completed":4,"eta":"12:10","status":"delivered","cost":1240}]
-    shipments=[{"id":1,"shipment_no":"SHP-88421","customer":"Northline Repairs","order_no":"SO-260921-41BC","driver":"Sanjay Mehta","status":"in_transit","eta":"2026-09-23 14:30","pod_status":"pending","value":32600},{"id":2,"shipment_no":"SHP-88418","customer":"Metro Garage","order_no":"SO-260920-18DA","driver":"Pooja Shah","status":"delivered","eta":"2026-09-23 12:10","pod_status":"verified","value":18450}]
-    if request.method == "GET": return JsonResponse({"summary":{"planned":8,"in_transit":3,"delivered_today":12,"exceptions":1},"routes":routes,"shipments":shipments,"exceptions":[{"id":1,"shipment_no":"SHP-88417","customer":"Rapid Fleet Care","reason":"Customer unavailable at dock","owner":"Dispatch desk","status":"open"}]})
-    data=parse_body(request) or {}; action=str(data.get("action","route")); item={"id":uuid4().hex[:8],"route_no":f"RT-{timezone.now():%y%m%d}-{uuid4().hex[:2].upper()}","driver":data.get("driver"),"vehicle":data.get("vehicle"),"stops":int(data.get("stops",1) or 1),"completed":0,"eta":data.get("eta","15:30"),"status":"planned","cost":float(data.get("cost",0) or 0)}
-    if action in {"status","proof"}: item={"id":data.get("id"),"status":"delivered" if action=="proof" else str(data.get("status","in_transit")),"pod_status":"verified" if action=="proof" else "pending"}
-    record_audit(request,"delivery action","shipment",item["id"],action); return JsonResponse({"item":item},status=201 if action=="route" else 200)
+    def route_item(route):
+        return {"id":route.id,"route_no":route.route_no,"driver":route.driver,"vehicle":route.vehicle,"stops":route.stops,"completed":route.completed,"eta":route.eta,"status":route.status,"cost":float(route.cost)}
+    def shipment_item(shipment):
+        return {"id":shipment.id,"shipment_no":shipment.shipment_no,"customer":shipment.customer,"order_no":shipment.order_no,"driver":shipment.driver,"status":shipment.status,"eta":shipment.eta.strftime("%Y-%m-%d %H:%M") if shipment.eta else None,"pod_status":shipment.pod_status,"value":float(shipment.value)}
+    if request.method == "GET":
+        routes=list(DeliveryRoute.objects.order_by("-created_at")[:100]); shipments=list(Shipment.objects.order_by("-created_at")[:100])
+        return JsonResponse({"summary":{"planned":sum(1 for x in routes if x.status=="planned"),"in_transit":sum(1 for x in shipments if x.status=="in_transit"),"delivered_today":sum(1 for x in shipments if x.status=="delivered" and x.proof_at and x.proof_at.date()==timezone.localdate()),"exceptions":sum(1 for x in shipments if x.status=="exception")},"routes":[route_item(x) for x in routes],"shipments":[shipment_item(x) for x in shipments],"exceptions":[]})
+    data=parse_body(request) or {}; action=str(data.get("action","route"))
+    try:
+        if action == "route":
+            route=DeliveryRoute.objects.create(route_no=f"RT-{timezone.now():%y%m%d}-{uuid4().hex[:4].upper()}",driver=str(data.get("driver","")),vehicle=str(data.get("vehicle","")),stops=max(1,int(data.get("stops",1) or 1)),eta=str(data.get("eta","15:30")),cost=float(data.get("cost",0) or 0),created_by=request.api_user)
+            item=route_item(route)
+        else:
+            shipment=Shipment.objects.get(id=int(data["id"]))
+            if action == "status": shipment.status=str(data.get("status",shipment.status))
+            elif action == "proof": shipment.pod_status="verified"; shipment.proof_at=timezone.now(); shipment.status="delivered"
+            else: raise ValueError("Unknown delivery action")
+            shipment.save(update_fields=["status","pod_status","proof_at"]); item=shipment_item(shipment)
+    except Exception as exc:
+        return JsonResponse({"detail":f"Could not update delivery data: {exc}"},status=400)
+    record_audit(request,"delivery action","shipment" if action != "route" else "route",item["id"],action)
+    return JsonResponse({"item":item},status=201 if action=="route" else 200)
 
 @csrf_exempt
 @roles_allowed("admin", "manager", "sales")

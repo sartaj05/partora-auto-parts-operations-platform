@@ -4,7 +4,7 @@ from django.contrib.auth.models import User
 from django.test import TestCase
 
 from .auth import issue_token
-from .models import DemandHistory, GoodsReceipt, Product, Profile, PurchaseOrder, PurchasePlan, RFQ, RFQOffer, Supplier, SupplierContract, SupplierInvoice, VehicleFitment
+from .models import AutomationRule, DemandHistory, FleetVehicle, GoodsReceipt, IntegrationConnection, Product, Profile, PurchaseOrder, PurchasePlan, RFQ, RFQOffer, SupportTicket, Supplier, SupplierContract, SupplierInvoice, VehicleFitment
 
 
 class DemandPlanningApiTests(TestCase):
@@ -241,3 +241,41 @@ class DemandPlanningApiTests(TestCase):
         response = self.client.get("/api/inventory-network/", **self.auth_headers(self.manager))
         self.assertEqual(response.status_code, 200)
         self.assertIn("recommendations", response.json())
+
+    def test_enterprise_actions_persist_after_reload(self):
+        integration_response = self.client.post(
+            "/api/integrations/",
+            data={"action": "connect", "name": "Test ERP", "type": "accounting"},
+            content_type="application/json",
+            **self.auth_headers(self.manager),
+        )
+        self.assertEqual(integration_response.status_code, 201)
+        self.assertTrue(IntegrationConnection.objects.filter(name="Test ERP").exists())
+        self.assertTrue(any(item["name"] == "Test ERP" for item in self.client.get("/api/integrations/", **self.auth_headers(self.manager)).json()["connections"]))
+
+        fleet_response = self.client.post(
+            "/api/fleet/",
+            data={"action": "vehicle", "registration": "TEST 0001", "customer": "Test Fleet", "make": "Test", "model": "Van", "year": 2024, "mileage": 1000, "next_service": "2030-01-01"},
+            content_type="application/json",
+            **self.auth_headers(self.manager),
+        )
+        self.assertEqual(fleet_response.status_code, 201)
+        self.assertTrue(FleetVehicle.objects.filter(registration="TEST 0001").exists())
+
+        ticket_response = self.client.post(
+            "/api/customer-service/",
+            data={"action": "ticket", "customer": "Test Fleet", "subject": "Test support request", "sla_due": "2030-01-01 12:00"},
+            content_type="application/json",
+            **self.auth_headers(self.manager),
+        )
+        self.assertEqual(ticket_response.status_code, 201)
+        self.assertTrue(SupportTicket.objects.filter(subject="Test support request").exists())
+
+        rule_response = self.client.post(
+            "/api/automation/",
+            data={"action": "rule", "name": "Test rule", "trigger": "test.event", "rule_action": "Send test notification"},
+            content_type="application/json",
+            **self.auth_headers(self.manager),
+        )
+        self.assertEqual(rule_response.status_code, 201)
+        self.assertTrue(AutomationRule.objects.filter(name="Test rule").exists())
