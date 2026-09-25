@@ -14,7 +14,7 @@ from django.http import JsonResponse
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 from .auth import api_login_required, get_current_organization, issue_token, roles_allowed
-from .models import Product, Quotation, QuotationItem, StockMovement, Supplier, SupplierContract, VehicleFitment, PurchaseOrder, PurchaseOrderItem, PurchaseOrderStatusEvent, GoodsReceipt, GoodsReceiptLine, SupplierInvoice, Warehouse, WarehouseStock, StockTransfer, SalesOrder, SalesOrderItem, Invoice, Payment, ReturnRequest, InventoryCount, InventoryCountLine, ProductLot, SupplierPriceSnapshot, Customer, CustomerPortalToken, PortalAccessLog, PriceRule, Notification, ApprovalRequest, AuditLog, DemandHistory, PurchasePlan, RFQ, RFQOffer, IntegrationConnection, WebhookSubscription, IntegrationLog, WebhookDelivery, PwaDevice, SyncConflict, MobileTask, AutomationRule, AutomationRun, FleetVehicle, FleetWorkOrder, SupportTicket, SupportCommunication, DeliveryRoute, Shipment, Organization, OrganizationMembership, OrganizationInvitation, StockLedgerEntry, StockReservation
+from .models import Product, Quotation, QuotationItem, StockMovement, Supplier, SupplierContract, VehicleFitment, PurchaseOrder, PurchaseOrderItem, PurchaseOrderStatusEvent, GoodsReceipt, GoodsReceiptLine, SupplierInvoice, Warehouse, WarehouseStock, StockTransfer, SalesOrder, SalesOrderItem, Invoice, Payment, FinanceTaxRule, ReturnRequest, InventoryCount, InventoryCountLine, ProductLot, SupplierPriceSnapshot, Customer, CustomerPortalToken, PortalAccessLog, PriceRule, Notification, ApprovalRequest, AuditLog, DemandHistory, PurchasePlan, RFQ, RFQOffer, IntegrationConnection, WebhookSubscription, IntegrationLog, WebhookDelivery, PwaDevice, SyncConflict, MobileTask, AutomationRule, AutomationRun, FleetVehicle, FleetWorkOrder, SupportTicket, SupportCommunication, DeliveryRoute, Shipment, Organization, OrganizationMembership, OrganizationInvitation, StockLedgerEntry, StockReservation
 from .serializers import product_dict, quotation_dict, supplier_dict
 
 ROLE_MODULES = {
@@ -487,17 +487,45 @@ def copilot_view(request):
 @csrf_exempt
 @roles_allowed("admin", "manager", "sales")
 def finance_view(request):
+    def parse_filter(name):
+        value=request.GET.get(name)
+        return date.fromisoformat(value) if value else None
     def invoice_item(invoice):
-        paid=float(invoice.payments.aggregate(total=Sum("amount"))["total"] or 0); total=float(invoice.total); balance=max(0, total-paid)
-        return {"id":invoice.id,"invoice_no":invoice.invoice_no,"customer":invoice.sales_order.customer_company or invoice.sales_order.customer_name,"total":total,"paid":paid,"balance":balance,"status":"paid" if balance==0 else "partial" if paid else invoice.status,"due_date":invoice.due_date.isoformat(),"gst":round(total*18/118,2)}
+        paid=float(invoice.payments.aggregate(total=Sum("amount"))["total"] or 0); total=float(invoice.total); balance=max(0, total-paid); rate=float(invoice.tax_rate or 0)
+        return {"id":invoice.id,"invoice_no":invoice.invoice_no,"customer":invoice.sales_order.customer_company or invoice.sales_order.customer_name,"total":total,"paid":paid,"balance":balance,"status":"paid" if balance==0 else "partial" if paid else invoice.status,"due_date":invoice.due_date.isoformat(),"gst_rate":rate,"gst":round(total*rate/(100+rate),2) if rate else 0,"reconciled":bool(paid or balance==0)}
     if request.method == "GET":
-        invoices=[invoice_item(i) for i in Invoice.objects.select_related("sales_order").prefetch_related("payments").order_by("-created_at")[:100]]
-        return JsonResponse({"metrics":{"receivables":sum(i["balance"] for i in invoices),"payables":float(SupplierInvoice.objects.exclude(status="rejected").aggregate(total=Sum("total"))["total"] or 0),"overdue":sum(i["balance"] for i in invoices if i["due_date"] < timezone.localdate().isoformat() and i["balance"]),"gst_due":round(sum(i["gst"] for i in invoices),2),"reconciled":round(sum(1 for i in invoices if i["status"] in {"paid","partial"})/len(invoices)*100) if invoices else 0},"invoices":invoices,"payments":[{"id":p.id,"reference":p.reference,"invoice_no":p.invoice.invoice_no,"amount":float(p.amount),"method":p.method,"reconciled":True,"paid_at":p.paid_at.date().isoformat()} for p in Payment.objects.select_related("invoice").order_by("-paid_at")[:50]],"tax_summary":[{"label":"Output GST","value":round(sum(i["gst"] for i in invoices),2)},{"label":"Input GST","value":round(sum(i["gst"] for i in invoices)*.61,2)},{"label":"Net GST payable","value":round(sum(i["gst"] for i in invoices)*.39,2)}]})
+        try:
+            start=parse_filter("from"); end=parse_filter("to")
+        except ValueError:
+            return JsonResponse({"detail":"Use ISO dates for from and to filters"},status=400)
+        invoice_query=Invoice.objects.select_related("sales_order").prefetch_related("payments").order_by("-created_at")
+        if start: invoice_query=invoice_query.filter(created_at__date__gte=start)
+        if end: invoice_query=invoice_query.filter(created_at__date__lte=end)
+        invoices=[invoice_item(i) for i in invoice_query[:250]]
+        today=timezone.localdate(); aging={"current":0,"1_30":0,"31_60":0,"61_plus":0}
+        for item in invoices:
+            days=(today-date.fromisoformat(item["due_date"])).days
+            bucket="current" if days<=0 else "1_30" if days<=30 else "31_60" if days<=60 else "61_plus"
+            aging[bucket]+=item["balance"]
+        payment_query=Payment.objects.select_related("invoice").order_by("-paid_at")
+        if start: payment_query=payment_query.filter(paid_at__date__gte=start)
+        if end: payment_query=payment_query.filter(paid_at__date__lte=end)
+        payments=[{"id":p.id,"reference":p.reference,"invoice_no":p.invoice.invoice_no,"amount":float(p.amount),"method":p.method,"reconciled":bool(p.reference),"paid_at":p.paid_at.date().isoformat()} for p in payment_query[:100]]
+        supplier_query=SupplierInvoice.objects.exclude(status="rejected")
+        if start: supplier_query=supplier_query.filter(invoice_date__gte=start)
+        if end: supplier_query=supplier_query.filter(invoice_date__lte=end)
+        input_tax=float(supplier_query.aggregate(total=Sum("tax"))["total"] or 0); output_tax=round(sum(i["gst"] for i in invoices),2); active_rules=FinanceTaxRule.objects.filter(active=True).order_by("-effective_from")
+        rules=[{"name":rule.name,"rate":float(rule.rate),"effective_from":rule.effective_from.isoformat()} for rule in active_rules[:20]] or [{"name":"GST","rate":18.0,"effective_from":"default"}]
+        return JsonResponse({"filters":{"from":start.isoformat() if start else None,"to":end.isoformat() if end else None},"metrics":{"receivables":sum(i["balance"] for i in invoices),"payables":float(supplier_query.aggregate(total=Sum("total"))["total"] or 0),"overdue":sum(i["balance"] for i in invoices if date.fromisoformat(i["due_date"]) < today and i["balance"]),"gst_due":round(output_tax-input_tax,2),"reconciled":round(sum(1 for i in invoices if i["reconciled"])/len(invoices)*100) if invoices else 0},"invoices":invoices,"payments":payments,"aging":aging,"tax_rules":rules,"tax_summary":[{"label":"Output GST","value":output_tax},{"label":"Input GST","value":round(input_tax,2)},{"label":"Net GST payable","value":round(output_tax-input_tax,2)}]})
     data=parse_body(request) or {}; action=str(data.get("action", "reconcile"))
     try:
         if action == "reconcile":
             invoice=Invoice.objects.select_related("sales_order").prefetch_related("payments").get(id=int(data["invoice_id"])); amount=Decimal(str(data.get("amount", invoice.total) or 0)); Payment.objects.create(invoice=invoice,amount=amount,method=str(data.get("method", "bank")),reference=str(data.get("reference", "")),created_by=request.api_user)
             paid=invoice.payments.aggregate(total=Sum("amount"))["total"] or 0; invoice.status="paid" if paid>=invoice.total else "partial"; invoice.save(update_fields=["status"]); record_audit(request,"reconcile payment","invoice",invoice.id,invoice.invoice_no); return JsonResponse({"item":invoice_item(invoice)})
+        if action == "export":
+            rows=["Invoice,Customer,Total,Paid,Balance,Status,Due date,GST"]
+            rows.extend(f"{item['invoice_no']},{item['customer']},{item['total']},{item['paid']},{item['balance']},{item['status']},{item['due_date']},{item['gst']}" for item in [invoice_item(i) for i in Invoice.objects.select_related("sales_order").prefetch_related("payments").order_by("-created_at")[:500]])
+            return JsonResponse({"item":{"format":"csv","filename":f"partora-finance-{timezone.localdate().isoformat()}.csv","rows":rows}})
         return JsonResponse({"item":{"format":data.get("format", "csv"),"filename":f"partora-finance-{timezone.localdate().isoformat()}.csv"}})
     except Exception as exc:
         return JsonResponse({"detail": f"Could not complete finance action: {exc}"}, status=400)
@@ -871,7 +899,7 @@ def sales_flow_view(request):
                 quote.status="approved"; quote.save(update_fields=["status"])
                 item=sales_order_dict(order)
             elif action == "invoice":
-                order=SalesOrder.objects.get(id=int(data["order_id"])); invoice,created=Invoice.objects.get_or_create(sales_order=order,defaults={"invoice_no":f"INV-{timezone.now():%y%m%d}-{uuid4().hex[:4].upper()}","total":order.total,"status":"issued","due_date":timezone.localdate()+timedelta(days=int(data.get("terms_days",30)))})
+                order=SalesOrder.objects.get(id=int(data["order_id"])); invoice,created=Invoice.objects.get_or_create(sales_order=order,defaults={"invoice_no":f"INV-{timezone.now():%y%m%d}-{uuid4().hex[:4].upper()}","total":order.total,"tax_rate":order.quotation.tax_rate if order.quotation else 18,"status":"issued","due_date":timezone.localdate()+timedelta(days=int(data.get("terms_days",30)))})
                 item=invoice_dict(invoice)
             else:
                 raise ValueError("Unknown action")

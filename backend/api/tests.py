@@ -5,7 +5,7 @@ from django.test import TestCase
 from django.utils import timezone
 
 from .auth import issue_token
-from .models import AutomationRule, Customer, CustomerPortalToken, DemandHistory, FleetVehicle, GoodsReceipt, IntegrationConnection, MobileTask, Organization, OrganizationInvitation, OrganizationMembership, PortalAccessLog, Product, Profile, PurchaseOrder, PurchaseOrderStatusEvent, PurchasePlan, PwaDevice, QuotationItem, Quotation, RFQ, RFQOffer, SalesOrder, SalesOrderItem, StockLedgerEntry, StockReservation, SupportTicket, Supplier, SupplierContract, SupplierInvoice, SyncConflict, VehicleFitment, WebhookDelivery, WebhookSubscription
+from .models import AutomationRule, Customer, CustomerPortalToken, DemandHistory, FinanceTaxRule, FleetVehicle, GoodsReceipt, IntegrationConnection, Invoice, MobileTask, Organization, OrganizationInvitation, OrganizationMembership, Payment, PortalAccessLog, Product, Profile, PurchaseOrder, PurchaseOrderStatusEvent, PurchasePlan, PwaDevice, QuotationItem, Quotation, RFQ, RFQOffer, SalesOrder, SalesOrderItem, StockLedgerEntry, StockReservation, SupportTicket, Supplier, SupplierContract, SupplierInvoice, SyncConflict, VehicleFitment, WebhookDelivery, WebhookSubscription
 
 
 class DemandPlanningApiTests(TestCase):
@@ -472,3 +472,19 @@ class DemandPlanningApiTests(TestCase):
         conflict = self.client.post("/api/mobile-warehouse/", data={"action": "conflict", "device_key": "scanner-01", "reference": "COUNT-1", "field": "quantity", "local_value": "4", "server_value": "3"}, content_type="application/json", **self.auth_headers(self.store))
         self.assertEqual(conflict.status_code, 201)
         self.assertTrue(SyncConflict.objects.filter(reference="COUNT-1", status="needs_review").exists())
+
+    def test_finance_date_filter_aging_tax_rules_and_reconciliation(self):
+        FinanceTaxRule.objects.create(name="GST 18", rate=18, effective_from=date.today() - timedelta(days=30))
+        order = SalesOrder.objects.create(order_no="SO-FIN-001", customer_name="Finance Customer", total=1180, created_by=self.manager)
+        invoice = Invoice.objects.create(invoice_no="INV-FIN-001", sales_order=order, total=1180, tax_rate=18, due_date=date.today() - timedelta(days=40))
+        Payment.objects.create(invoice=invoice, amount=100, method="bank", reference="BANK-001", created_by=self.manager)
+        response = self.client.get(f"/api/finance/?from={date.today().isoformat()}&to={date.today().isoformat()}", **self.auth_headers(self.manager))
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(len(payload["invoices"]), 1)
+        self.assertEqual(payload["invoices"][0]["gst"], 180.0)
+        self.assertEqual(payload["aging"]["31_60"], 1080.0)
+        self.assertEqual(payload["tax_rules"][0]["rate"], 18.0)
+        export = self.client.post("/api/finance/", data={"action": "export"}, content_type="application/json", **self.auth_headers(self.manager))
+        self.assertEqual(export.status_code, 200)
+        self.assertIn("INV-FIN-001", export.json()["item"]["rows"][1])

@@ -265,6 +265,7 @@ class Invoice(models.Model):
     invoice_no = models.CharField(max_length=30, unique=True)
     sales_order = models.OneToOneField(SalesOrder, on_delete=models.PROTECT, related_name="invoice")
     total = models.DecimalField(max_digits=14, decimal_places=2)
+    tax_rate = models.DecimalField(max_digits=5, decimal_places=2, default=18)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="issued")
     due_date = models.DateField()
     created_at = models.DateTimeField(auto_now_add=True)
@@ -277,6 +278,14 @@ class Payment(models.Model):
     reference = models.CharField(max_length=80, blank=True)
     paid_at = models.DateTimeField(default=timezone.now)
     created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name="partora_payments")
+
+
+class FinanceTaxRule(models.Model):
+    name = models.CharField(max_length=80, unique=True)
+    rate = models.DecimalField(max_digits=5, decimal_places=2, default=18)
+    effective_from = models.DateField(default=timezone.localdate)
+    active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
 
 class ReturnRequest(models.Model):
     STATUS_CHOICES = [("requested", "Requested"), ("approved", "Approved"), ("received", "Received"), ("inspected", "Inspected"), ("resolved", "Resolved"), ("rejected", "Rejected")]
@@ -710,7 +719,7 @@ class OrganizationInvitation(models.Model):
 # Tenant ownership is added to the existing branch and enterprise records in
 # one place so every new enterprise feature has the same isolation boundary.
 for _tenant_model in [
-    Warehouse, IntegrationConnection, WebhookSubscription, IntegrationLog, WebhookDelivery,
+    Warehouse, IntegrationConnection, WebhookSubscription, IntegrationLog, WebhookDelivery, FinanceTaxRule,
     PwaDevice, SyncConflict, MobileTask, AutomationRule, AutomationRun, FleetVehicle, FleetWorkOrder,
     SupportTicket, SupportCommunication, DeliveryRoute, Shipment,
 ]:
