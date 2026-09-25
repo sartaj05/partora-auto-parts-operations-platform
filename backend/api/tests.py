@@ -5,7 +5,7 @@ from django.test import TestCase
 from django.utils import timezone
 
 from .auth import issue_token
-from .models import AutomationRule, Customer, CustomerPortalToken, DemandHistory, FinanceTaxRule, FleetVehicle, GoodsReceipt, IntegrationConnection, Invoice, MobileTask, Organization, OrganizationInvitation, OrganizationMembership, Payment, PermissionDefinition, PortalAccessLog, Product, Profile, PurchaseOrder, PurchaseOrderStatusEvent, PurchasePlan, PwaDevice, QuotationItem, Quotation, RFQ, RFQOffer, RolePermission, SalesOrder, SalesOrderItem, StockLedgerEntry, StockReservation, SupportTicket, Supplier, SupplierContract, SupplierInvoice, SyncConflict, VehicleFitment, Warehouse, WebhookDelivery, WebhookSubscription
+from .models import ApprovalRequest, AutomationRule, Customer, CustomerPortalToken, DemandHistory, FinanceTaxRule, FleetVehicle, GoodsReceipt, IntegrationConnection, Invoice, MobileTask, Organization, OrganizationInvitation, OrganizationMembership, Payment, PermissionDefinition, PortalAccessLog, Product, Profile, PurchaseOrder, PurchaseOrderStatusEvent, PurchasePlan, PwaDevice, QuotationItem, Quotation, RFQ, RFQOffer, RolePermission, SalesOrder, SalesOrderItem, StockLedgerEntry, StockReservation, SupportTicket, Supplier, SupplierContract, SupplierInvoice, SyncConflict, VehicleFitment, Warehouse, WebhookDelivery, WebhookSubscription
 
 
 class DemandPlanningApiTests(TestCase):
@@ -535,3 +535,19 @@ class DemandPlanningApiTests(TestCase):
         self.assertEqual([item["code"] for item in allowed.json()["warehouses"]], ["DEL-BRANCH"])
         denied = self.client.get("/api/warehouses/", HTTP_X_PARTORA_BRANCH="GUR-BRANCH", **self.auth_headers(self.store))
         self.assertEqual(denied.status_code, 403)
+
+    def test_approval_workflow_blocks_self_review_and_enforces_limits(self):
+        request_response = self.client.post("/api/governance/", data={"action": "request", "kind": "payment", "reference": "PAY-001", "amount": 200000}, content_type="application/json", **self.auth_headers(self.store))
+        self.assertEqual(request_response.status_code, 200)
+        approval_id = request_response.json()["item"]["id"]
+        self.assertEqual(self.client.post("/api/governance/", data={"action": "approve", "id": approval_id}, content_type="application/json", **self.auth_headers(self.store)).status_code, 403)
+        self.assertEqual(self.client.post("/api/governance/", data={"action": "approve", "id": approval_id}, content_type="application/json", **self.auth_headers(self.manager)).status_code, 403)
+        approved = self.client.post("/api/governance/", data={"action": "approve", "id": approval_id}, content_type="application/json", **self.auth_headers(self.admin))
+        self.assertEqual(approved.status_code, 200)
+        self.assertEqual(approved.json()["item"]["status"], "approved")
+
+    def test_store_stock_adjustment_creates_pending_approval(self):
+        response = self.client.post("/api/stock/", data={"type": "adjustment", "sku": "TEST-001", "quantity": 15, "reference": "COUNT-APPROVAL"}, content_type="application/json", **self.auth_headers(self.store))
+        self.assertEqual(response.status_code, 202)
+        self.assertTrue(response.json()["approval_required"])
+        self.assertTrue(ApprovalRequest.objects.filter(kind="stock", reference="COUNT-APPROVAL", status="pending").exists())

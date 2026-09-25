@@ -223,6 +223,11 @@ def stock_view(request):
             elif movement_type == "adjustment": delta = quantity - product.stock_qty
             else:
                 raise ValueError("Invalid movement type")
+            if movement_type == "adjustment" and request.effective_role == "store":
+                approval=ApprovalRequest.objects.create(kind="stock", reference=str(data.get("reference") or product.sku), amount=abs(delta) * product.price, organization=request.organization, branch=request.branch, payload={"sku": product.sku, "quantity": quantity, "type": movement_type}, requested_by=request.api_user, notes="Stock adjustment requires manager approval")
+                Notification.objects.create(role="manager", title="Stock adjustment approval needed", message=f"{product.sku} adjustment requested by {request.api_user.get_full_name() or request.api_user.username}")
+                record_audit(request, "request stock approval", "approval", approval.id, product.sku)
+                return JsonResponse({"item": {"id": approval.id, "status": approval.status, "kind": approval.kind, "reference": approval.reference, "amount": float(approval.amount)}, "approval_required": True}, status=202)
             with transaction.atomic():
                 product.stock_qty = product.stock_qty + delta
                 product.save(update_fields=["stock_qty", "updated_at"])
@@ -1525,6 +1530,13 @@ def pricing_view(request):
         return JsonResponse({"items":rules})
     if request.method == "POST":
         data=parse_body(request) or {}; action=str(data.get("action","rule"))
+        if action != "preview" and request.effective_role == "sales":
+            discount=float(data.get("discount_percent", 0) or 0)
+            if discount <= 0: return JsonResponse({"detail":"Discount percentage is required"}, status=400)
+            approval=ApprovalRequest.objects.create(kind="discount", reference=str(data.get("name") or "Pricing discount"), amount=discount, organization=request.organization, branch=request.branch, payload={"customer_type": data.get("customer_type", "dealer"), "min_qty": data.get("min_qty", 1), "discount_percent": discount}, requested_by=request.api_user, notes="Sales discount requires manager approval")
+            Notification.objects.create(role="manager", title="Discount approval needed", message=f"{approval.reference} requested by {request.api_user.get_full_name() or request.api_user.username}")
+            record_audit(request, "request discount approval", "approval", approval.id, approval.reference)
+            return JsonResponse({"item": {"id": approval.id, "status": approval.status, "kind": approval.kind, "reference": approval.reference, "amount": float(approval.amount)}, "approval_required": True}, status=202)
         if action != "preview" and request.effective_role not in {"admin", "manager"}:
             return JsonResponse({"detail":"Only admin or manager can change pricing rules"},status=403)
         if action == "preview":
@@ -1568,25 +1580,35 @@ def analytics_view(request):
     return JsonResponse({"metrics":{"sales_total":sales_total,"invoice_total":invoice_total,"inventory_value":inventory_value,"inventory_cost":inventory_cost,"estimated_inventory_margin":max(0,inventory_value-inventory_cost),"outstanding":outstanding,"quote_conversion":round((approved/quotes_total*100),1) if quotes_total else 0,"low_stock":low_stock},"operations":{"open_purchase_orders":open_purchase_orders,"open_rfqs":open_rfqs,"receiving_exceptions":invoice_exceptions,"warehouse_units":WarehouseStock.objects.aggregate(total=Sum("quantity"))["total"] or 0,"at_risk_suppliers":0},"alerts":alerts,"categories":categories,"suppliers":suppliers,"top_customers":top_customers})
 
 @csrf_exempt
-@roles_allowed("admin", "manager", "sales")
+@roles_allowed("admin", "manager", "sales", "store")
 def governance_view(request):
     role=request.effective_role
     if request.method == "GET":
         notifications=Notification.objects.filter(Q(user=request.api_user)|Q(user__isnull=True,role=role)).order_by("-created_at")[:50]
-        approvals=ApprovalRequest.objects.select_related("requested_by","reviewed_by").order_by("-created_at")[:100]
+        approval_query=ApprovalRequest.objects.select_related("requested_by","reviewed_by","branch").filter(organization=request.organization)
+        if role not in {"admin", "manager"}:
+            approval_query=approval_query.filter(requested_by=request.api_user)
+        approvals=approval_query.order_by("-created_at")[:100]
         audits=AuditLog.objects.select_related("user").order_by("-created_at")[:100]
         return JsonResponse({"notifications":[{"id":n.id,"title":n.title,"message":n.message,"read":n.read,"created_at":n.created_at.isoformat()} for n in notifications],"approvals":[{"id":a.id,"kind":a.kind,"reference":a.reference,"amount":float(a.amount),"status":a.status,"requested_by":(a.requested_by.get_full_name() or a.requested_by.username) if a.requested_by else "System","reviewed_by":(a.reviewed_by.get_full_name() or a.reviewed_by.username) if a.reviewed_by else None,"notes":a.notes,"created_at":a.created_at.isoformat()} for a in approvals],"audits":[{"id":a.id,"user":(a.user.get_full_name() or a.user.username) if a.user else "System","action":a.action,"entity":a.entity,"entity_id":a.entity_id,"detail":a.detail,"created_at":a.created_at.isoformat()} for a in audits]})
     if request.method == "POST":
         data=parse_body(request) or {}; action=str(data.get("action","request"))
         try:
             if action == "request":
-                approval=ApprovalRequest.objects.create(kind=str(data.get("kind","purchase")),reference=str(data["reference"]).strip(),amount=float(data.get("amount",0) or 0),notes=str(data.get("notes","")).strip(),requested_by=request.api_user)
+                kind=str(data.get("kind","purchase")).strip()
+                if kind not in {choice[0] for choice in ApprovalRequest.KIND_CHOICES}: raise ValueError("Invalid approval type")
+                approval=ApprovalRequest.objects.create(kind=kind,reference=str(data["reference"]).strip(),amount=float(data.get("amount",0) or 0),organization=request.organization,branch=request.branch,payload=data.get("payload") if isinstance(data.get("payload"), dict) else {},notes=str(data.get("notes","")).strip(),requested_by=request.api_user)
                 Notification.objects.create(role="manager",title=f"Approval needed: {approval.kind}",message=f"{approval.reference} requested by {request.api_user.get_full_name() or request.api_user.username}")
                 record_audit(request,"request approval","approval",approval.id,approval.reference)
                 item={"id":approval.id,"kind":approval.kind,"reference":approval.reference,"amount":float(approval.amount),"status":approval.status,"requested_by":request.api_user.get_full_name() or request.api_user.username,"reviewed_by":None,"notes":approval.notes,"created_at":approval.created_at.isoformat()}
             elif action in {"approve","reject"}:
                 if role not in {"admin","manager"}: return JsonResponse({"detail":"Only admin or manager can review approvals"},status=403)
-                approval=ApprovalRequest.objects.get(id=int(data["id"])); approval.status="approved" if action=="approve" else "rejected"; approval.reviewed_by=request.api_user; approval.reviewed_at=timezone.now(); approval.notes=str(data.get("notes",approval.notes)); approval.save(update_fields=["status","reviewed_by","reviewed_at","notes"])
+                approval=ApprovalRequest.objects.get(id=int(data["id"]),organization=request.organization)
+                if approval.status != "pending": return JsonResponse({"detail":"Only pending approvals can be reviewed"},status=400)
+                if approval.requested_by_id == request.api_user.id: return JsonResponse({"detail":"You cannot approve your own request"},status=403)
+                membership=request.api_user.organization_memberships.filter(organization=request.organization,active=True).first()
+                if action == "approve" and role != "admin" and membership and approval.amount > membership.approval_limit: return JsonResponse({"detail":"Approval exceeds your organization approval limit"},status=403)
+                approval.status="approved" if action=="approve" else "rejected"; approval.reviewed_by=request.api_user; approval.reviewed_at=timezone.now(); approval.notes=str(data.get("notes",approval.notes)); approval.save(update_fields=["status","reviewed_by","reviewed_at","notes"])
                 if approval.requested_by: Notification.objects.create(user=approval.requested_by,title=f"Approval {approval.status}",message=f"{approval.reference} was {approval.status} by {request.api_user.get_full_name() or request.api_user.username}")
                 record_audit(request,action,"approval",approval.id,approval.reference)
                 item={"id":approval.id,"kind":approval.kind,"reference":approval.reference,"amount":float(approval.amount),"status":approval.status,"requested_by":(approval.requested_by.get_full_name() or approval.requested_by.username) if approval.requested_by else "System","reviewed_by":request.api_user.get_full_name() or request.api_user.username,"notes":approval.notes,"created_at":approval.created_at.isoformat()}

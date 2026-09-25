@@ -425,10 +425,13 @@ class Notification(models.Model):
 
 class ApprovalRequest(models.Model):
     STATUS_CHOICES = [("pending","Pending"),("approved","Approved"),("rejected","Rejected")]
-    KIND_CHOICES = [("purchase","Purchase"),("discount","Discount"),("stock","Stock adjustment")]
+    KIND_CHOICES = [("purchase","Purchase"),("discount","Discount"),("stock","Stock adjustment"),("payment","Payment")]
     kind = models.CharField(max_length=20, choices=KIND_CHOICES)
     reference = models.CharField(max_length=80)
     amount = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    organization = models.ForeignKey("Organization", on_delete=models.CASCADE, null=True, blank=True, related_name="approval_requests")
+    branch = models.ForeignKey(Warehouse, on_delete=models.SET_NULL, null=True, blank=True, related_name="approval_requests")
+    payload = models.JSONField(default=dict, blank=True)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="pending")
     requested_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name="approval_requests")
     reviewed_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name="approval_reviews")
