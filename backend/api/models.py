@@ -483,6 +483,9 @@ class IntegrationConnection(models.Model):
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="available")
     last_sync = models.DateTimeField(null=True, blank=True)
     records = models.PositiveIntegerField(default=0)
+    credential_digest = models.CharField(max_length=128, blank=True)
+    failure_count = models.PositiveIntegerField(default=0)
+    last_error = models.CharField(max_length=300, blank=True)
     created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name="integration_connections")
     created_at = models.DateTimeField(auto_now_add=True)
 
@@ -494,6 +497,7 @@ class WebhookSubscription(models.Model):
     target = models.URLField(max_length=300)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="active")
     deliveries = models.PositiveIntegerField(default=0)
+    signing_key_digest = models.CharField(max_length=128, blank=True)
     created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name="webhook_subscriptions")
     created_at = models.DateTimeField(auto_now_add=True)
 
@@ -504,6 +508,19 @@ class IntegrationLog(models.Model):
     target = models.CharField(max_length=300, blank=True)
     status = models.CharField(max_length=20, default="delivered")
     detail = models.CharField(max_length=300, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+
+class WebhookDelivery(models.Model):
+    STATUS_CHOICES = [("queued", "Queued"), ("delivered", "Delivered"), ("retrying", "Retrying"), ("failed", "Failed")]
+    subscription = models.ForeignKey(WebhookSubscription, on_delete=models.CASCADE, related_name="delivery_attempts")
+    event = models.CharField(max_length=100)
+    payload = models.TextField(default="{}")
+    signature = models.CharField(max_length=128, blank=True)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="queued")
+    attempts = models.PositiveIntegerField(default=0)
+    next_retry_at = models.DateTimeField(null=True, blank=True)
+    last_error = models.CharField(max_length=300, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
 
@@ -676,7 +693,7 @@ class OrganizationInvitation(models.Model):
 # Tenant ownership is added to the existing branch and enterprise records in
 # one place so every new enterprise feature has the same isolation boundary.
 for _tenant_model in [
-    Warehouse, IntegrationConnection, WebhookSubscription, IntegrationLog,
+    Warehouse, IntegrationConnection, WebhookSubscription, IntegrationLog, WebhookDelivery,
     PwaDevice, SyncConflict, AutomationRule, AutomationRun, FleetVehicle, FleetWorkOrder,
     SupportTicket, SupportCommunication, DeliveryRoute, Shipment,
 ]:

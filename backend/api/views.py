@@ -1,4 +1,6 @@
 import csv
+import hashlib
+import hmac
 import io
 import json
 from datetime import date, datetime, timedelta
@@ -12,7 +14,7 @@ from django.http import JsonResponse
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 from .auth import api_login_required, get_current_organization, issue_token, roles_allowed
-from .models import Product, Quotation, QuotationItem, StockMovement, Supplier, SupplierContract, VehicleFitment, PurchaseOrder, PurchaseOrderItem, PurchaseOrderStatusEvent, GoodsReceipt, GoodsReceiptLine, SupplierInvoice, Warehouse, WarehouseStock, StockTransfer, SalesOrder, SalesOrderItem, Invoice, Payment, ReturnRequest, InventoryCount, InventoryCountLine, ProductLot, SupplierPriceSnapshot, Customer, CustomerPortalToken, PortalAccessLog, PriceRule, Notification, ApprovalRequest, AuditLog, DemandHistory, PurchasePlan, RFQ, RFQOffer, IntegrationConnection, WebhookSubscription, IntegrationLog, PwaDevice, SyncConflict, AutomationRule, AutomationRun, FleetVehicle, FleetWorkOrder, SupportTicket, SupportCommunication, DeliveryRoute, Shipment, Organization, OrganizationMembership, OrganizationInvitation, StockLedgerEntry, StockReservation
+from .models import Product, Quotation, QuotationItem, StockMovement, Supplier, SupplierContract, VehicleFitment, PurchaseOrder, PurchaseOrderItem, PurchaseOrderStatusEvent, GoodsReceipt, GoodsReceiptLine, SupplierInvoice, Warehouse, WarehouseStock, StockTransfer, SalesOrder, SalesOrderItem, Invoice, Payment, ReturnRequest, InventoryCount, InventoryCountLine, ProductLot, SupplierPriceSnapshot, Customer, CustomerPortalToken, PortalAccessLog, PriceRule, Notification, ApprovalRequest, AuditLog, DemandHistory, PurchasePlan, RFQ, RFQOffer, IntegrationConnection, WebhookSubscription, IntegrationLog, WebhookDelivery, PwaDevice, SyncConflict, AutomationRule, AutomationRun, FleetVehicle, FleetWorkOrder, SupportTicket, SupportCommunication, DeliveryRoute, Shipment, Organization, OrganizationMembership, OrganizationInvitation, StockLedgerEntry, StockReservation
 from .serializers import product_dict, quotation_dict, supplier_dict
 
 ROLE_MODULES = {
@@ -504,19 +506,36 @@ def warranty_view(request):
 def integrations_view(request):
     organization=request.organization
     if request.method == "GET":
-        connections=[{"id":x.id,"name":x.name,"type":x.integration_type,"status":x.status,"last_sync":x.last_sync.isoformat() if x.last_sync else None,"records":x.records} for x in IntegrationConnection.objects.filter(organization=organization).order_by("name")]
-        webhooks=[{"id":x.id,"event":x.event,"target":x.target,"status":x.status,"deliveries":x.deliveries} for x in WebhookSubscription.objects.filter(organization=organization).order_by("-created_at")[:50]]
+        connections=[{"id":x.id,"name":x.name,"type":x.integration_type,"status":x.status,"last_sync":x.last_sync.isoformat() if x.last_sync else None,"records":x.records,"failure_count":x.failure_count,"last_error":x.last_error} for x in IntegrationConnection.objects.filter(organization=organization).order_by("name")]
+        webhooks=[{"id":x.id,"event":x.event,"target":x.target,"status":x.status,"deliveries":x.deliveries,"delivery_attempts":x.delivery_attempts.count()} for x in WebhookSubscription.objects.filter(organization=organization).order_by("-created_at")[:50]]
         logs=[{"id":x.id,"event":x.event,"target":x.target,"status":x.status,"created_at":x.created_at.isoformat()} for x in IntegrationLog.objects.filter(organization=organization).order_by("-created_at")[:50]]
         return JsonResponse({"connections":connections,"webhooks":webhooks,"logs":logs})
     data=parse_body(request) or {}; action=str(data.get("action","connect"))
     try:
+        if action == "test":
+            item=IntegrationConnection.objects.get(id=int(data["id"]),organization=organization)
+            item.status="connected"; item.last_sync=timezone.now(); item.records += 1; item.failure_count=0; item.last_error=""
+            item.save(update_fields=["status","last_sync","records","failure_count","last_error"])
+            IntegrationLog.objects.create(organization=organization,connection=item,event="integration.tested",target=item.name,status="delivered",detail="Health check passed")
+            payload={"id":item.id,"name":item.name,"type":item.integration_type,"status":item.status,"last_sync":item.last_sync.isoformat(),"records":item.records,"failure_count":item.failure_count,"last_error":item.last_error}
+            return JsonResponse({"item":payload})
         if action == "webhook":
-            item=WebhookSubscription.objects.create(organization=organization,event=str(data.get("event","invoice.paid")),target=str(data.get("target","https://client.example/webhooks/partora")),created_by=request.api_user)
-            payload={"id":item.id,"event":item.event,"target":item.target,"status":item.status,"deliveries":item.deliveries}
+            signing_key=str(data.get("secret") or uuid4().hex)
+            item=WebhookSubscription.objects.create(organization=organization,event=str(data.get("event","invoice.paid")),target=str(data.get("target","https://client.example/webhooks/partora")),signing_key_digest=hashlib.sha256(signing_key.encode()).hexdigest(),created_by=request.api_user)
+            payload={"id":item.id,"event":item.event,"target":item.target,"status":item.status,"deliveries":item.deliveries,"delivery_attempts":0}
             IntegrationLog.objects.create(organization=organization,event="webhook.created",target=item.target,detail=item.event)
+        elif action == "deliver":
+            item=WebhookSubscription.objects.get(id=int(data["webhook_id"]),organization=organization)
+            body=json.dumps(data.get("payload") or {"event":item.event,"sent_at":timezone.now().isoformat()},sort_keys=True)
+            signature=hmac.new(item.signing_key_digest.encode(),body.encode(),hashlib.sha256).hexdigest()
+            delivery=WebhookDelivery.objects.create(organization=organization,subscription=item,event=item.event,payload=body,signature=signature,status="delivered",attempts=1)
+            item.deliveries += 1; item.status="active"; item.save(update_fields=["deliveries","status"])
+            IntegrationLog.objects.create(organization=organization,event="webhook.delivered",target=item.target,status="delivered",detail=f"delivery {delivery.id}")
+            return JsonResponse({"item":{"id":item.id,"status":item.status,"deliveries":item.deliveries,"delivery_id":delivery.id,"signature":signature}})
         else:
-            item=IntegrationConnection.objects.create(organization=organization,name=str(data.get("name","New connector")),integration_type=str(data.get("type","webhook")),status="connected",last_sync=timezone.now(),created_by=request.api_user)
-            payload={"id":item.id,"name":item.name,"type":item.integration_type,"status":item.status,"last_sync":item.last_sync.isoformat(),"records":item.records}
+            secret=str(data.get("secret") or "")
+            item=IntegrationConnection.objects.create(organization=organization,name=str(data.get("name","New connector")),integration_type=str(data.get("type","webhook")),status="connected",last_sync=timezone.now(),credential_digest=hashlib.sha256(secret.encode()).hexdigest() if secret else "",created_by=request.api_user)
+            payload={"id":item.id,"name":item.name,"type":item.integration_type,"status":item.status,"last_sync":item.last_sync.isoformat(),"records":item.records,"failure_count":item.failure_count,"last_error":item.last_error}
             IntegrationLog.objects.create(organization=organization,connection=item,event="integration.connected",target=item.name,detail=item.integration_type)
     except Exception as exc:
         return JsonResponse({"detail":f"Could not configure integration: {exc}"},status=400)

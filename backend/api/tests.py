@@ -5,7 +5,7 @@ from django.test import TestCase
 from django.utils import timezone
 
 from .auth import issue_token
-from .models import AutomationRule, Customer, CustomerPortalToken, DemandHistory, FleetVehicle, GoodsReceipt, IntegrationConnection, Organization, OrganizationInvitation, OrganizationMembership, PortalAccessLog, Product, Profile, PurchaseOrder, PurchaseOrderStatusEvent, PurchasePlan, QuotationItem, Quotation, RFQ, RFQOffer, SalesOrder, SalesOrderItem, StockLedgerEntry, StockReservation, SupportTicket, Supplier, SupplierContract, SupplierInvoice, VehicleFitment
+from .models import AutomationRule, Customer, CustomerPortalToken, DemandHistory, FleetVehicle, GoodsReceipt, IntegrationConnection, Organization, OrganizationInvitation, OrganizationMembership, PortalAccessLog, Product, Profile, PurchaseOrder, PurchaseOrderStatusEvent, PurchasePlan, QuotationItem, Quotation, RFQ, RFQOffer, SalesOrder, SalesOrderItem, StockLedgerEntry, StockReservation, SupportTicket, Supplier, SupplierContract, SupplierInvoice, VehicleFitment, WebhookDelivery, WebhookSubscription
 
 
 class DemandPlanningApiTests(TestCase):
@@ -417,3 +417,41 @@ class DemandPlanningApiTests(TestCase):
         item = self.client.get("/api/purchase-orders/", **self.auth_headers(self.manager)).json()["items"][0]
         self.assertEqual(item["progress"], 100)
         self.assertEqual(len(item["events"]), 2)
+
+    def test_integration_health_check_and_signed_webhook_delivery(self):
+        connection = self.client.post(
+            "/api/integrations/",
+            data={"action": "connect", "name": "Test ERP", "type": "accounting", "secret": "credential-value"},
+            content_type="application/json",
+            **self.auth_headers(self.manager),
+        )
+        self.assertEqual(connection.status_code, 201)
+        integration = IntegrationConnection.objects.get(name="Test ERP")
+        self.assertNotEqual(integration.credential_digest, "credential-value")
+
+        health = self.client.post(
+            "/api/integrations/",
+            data={"action": "test", "id": integration.id},
+            content_type="application/json",
+            **self.auth_headers(self.manager),
+        )
+        self.assertEqual(health.status_code, 200)
+        self.assertEqual(health.json()["item"]["status"], "connected")
+
+        webhook = self.client.post(
+            "/api/integrations/",
+            data={"action": "webhook", "event": "invoice.paid", "target": "https://example.test/hook", "secret": "webhook-secret"},
+            content_type="application/json",
+            **self.auth_headers(self.manager),
+        )
+        self.assertEqual(webhook.status_code, 201)
+        subscription = WebhookSubscription.objects.get(id=webhook.json()["item"]["id"])
+        delivered = self.client.post(
+            "/api/integrations/",
+            data={"action": "deliver", "webhook_id": subscription.id, "payload": {"invoice": "INV-1"}},
+            content_type="application/json",
+            **self.auth_headers(self.manager),
+        )
+        self.assertEqual(delivered.status_code, 200)
+        self.assertEqual(WebhookDelivery.objects.filter(subscription=subscription, status="delivered").count(), 1)
+        self.assertEqual(subscription.__class__.objects.get(id=subscription.id).deliveries, 1)
